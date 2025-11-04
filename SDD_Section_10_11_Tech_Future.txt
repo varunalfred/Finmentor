@@ -1,0 +1,862 @@
+================================================================================
+                    SYSTEM DESIGN DOCUMENT - SECTION 10 & 11
+              TECHNOLOGY JUSTIFICATION & FUTURE ENHANCEMENTS
+================================================================================
+
+10. TECHNOLOGY JUSTIFICATION
+--------------------------------------------------------------------------------
+
+PURPOSE: Rationale for technology choices
+
+This section explains why each technology was selected and how it contributes
+to the system's goals.
+
+
+10.1 BACKEND FRAMEWORK: FASTAPI
+--------------------------------------------------------------------------------
+
+CHOICE: FastAPI 0.104.1
+
+JUSTIFICATION:
+
+1. PERFORMANCE
+   - Built on Starlette and Pydantic
+   - Async/await support for high concurrency
+   - One of the fastest Python frameworks
+   - Comparable to Node.js and Go in benchmarks
+
+2. DEVELOPER PRODUCTIVITY
+   - Automatic API documentation (Swagger/OpenAPI)
+   - Type hints with runtime validation
+   - Minimal boilerplate code
+   - Excellent error messages
+
+3. MODERN PYTHON FEATURES
+   - Python 3.7+ type hints
+   - Pydantic for data validation
+   - Async support throughout
+
+4. ECOSYSTEM
+   - Large community
+   - Excellent documentation
+   - Wide adoption in industry
+
+ALTERNATIVES CONSIDERED:
+- Flask: Mature but lacks async, requires more boilerplate
+- Django: Too heavyweight for API-only service
+- Express.js (Node): Would require learning new language
+
+DECISION: FastAPI chosen for performance + productivity
+
+
+10.2 DATABASE: POSTGRESQL + PGVECTOR
+--------------------------------------------------------------------------------
+
+CHOICE: PostgreSQL 15+ with pgvector extension
+
+JUSTIFICATION:
+
+1. POSTGRESQL
+   - Robust, mature, production-proven
+   - ACID compliance for data integrity
+   - Rich data types (JSONB, Arrays, etc.)
+   - Excellent performance for complex queries
+   - Strong community and ecosystem
+
+2. PGVECTOR EXTENSION
+   - Native vector similarity search
+   - Eliminates need for separate vector database
+   - Reduces infrastructure complexity
+   - Atomic operations (vector + relational in one transaction)
+   - Cost-effective (no additional service)
+
+3. UNIFIED DATA STORE
+   - User data, conversations, and vectors in one DB
+   - Simplified backup/restore
+   - Lower latency (no network hop to vector DB)
+   - Easier to maintain
+
+ALTERNATIVES CONSIDERED:
+- MySQL: Less advanced features than PostgreSQL
+- MongoDB: NoSQL not ideal for relational data
+- Pinecone/Weaviate: Separate vector DB adds complexity
+- Chroma: Embedded DB, not production-ready for scale
+
+DECISION: PostgreSQL + pgvector for simplicity and performance
+
+
+10.3 LLM FRAMEWORK: DSPY
+--------------------------------------------------------------------------------
+
+CHOICE: DSPy (Declarative Self-improving Python)
+
+JUSTIFICATION:
+
+1. STRUCTURED PROMPTING
+   - Signatures define input/output clearly
+   - Type-safe interactions with LLM
+   - Easier to maintain than string templates
+
+2. MODULARITY
+   - Compose complex pipelines from modules
+   - Reusable components (ChainOfThought, ReAct, etc.)
+   - Easy to test individual components
+
+3. OPTIMIZATION
+   - Can optimize prompts automatically
+   - Few-shot learning support
+   - Evaluation-driven improvement
+
+4. ABSTRACTION
+   - LLM-agnostic (can switch from Gemini to GPT)
+   - Hides API-specific details
+   - Consistent interface
+
+EXAMPLE:
+
+# Without DSPy (string templates)
+prompt = f"""
+You are a financial advisor.
+User question: {query}
+Context: {context}
+Provide a helpful answer.
+"""
+response = llm.generate(prompt)
+
+# With DSPy (structured)
+class FinancialAdvice(dspy.Signature):
+    query = dspy.InputField()
+    context = dspy.InputField()
+    answer = dspy.OutputField(desc="Helpful financial advice")
+
+advisor = dspy.ChainOfThought(FinancialAdvice)
+response = advisor(query=query, context=context)
+
+ALTERNATIVES CONSIDERED:
+- LangChain: More complex, heavier, harder to optimize
+- Plain LLM API: Too low-level, no structure
+- Guidance: Less mature than DSPy
+
+DECISION: DSPy for structured, maintainable LLM interactions
+
+
+10.4 LLM PROVIDER: GOOGLE GEMINI
+--------------------------------------------------------------------------------
+
+CHOICE: Google Gemini (gemini-1.5-flash)
+
+JUSTIFICATION:
+
+1. COST-EFFECTIVENESS
+   - Free tier: 1500 requests/day
+   - Competitive pricing for paid tier
+   - Good performance-to-cost ratio
+
+2. PERFORMANCE
+   - Fast response times (gemini-flash optimized)
+   - Good quality for most queries
+   - Multimodal capabilities (future: image analysis)
+
+3. INTEGRATION
+   - Official Python SDK
+   - Embedding model included (embedding-001)
+   - Same provider for text and embeddings
+
+4. CONTEXT WINDOW
+   - 32K tokens input (sufficient for most queries)
+   - Can handle long conversation histories
+
+ALTERNATIVES CONSIDERED:
+- OpenAI GPT-4: More expensive, better quality (overkill for MVP)
+- Claude: Good but pricing less competitive
+- Llama 2: Self-hosting complexity not worth it for MVP
+- Mistral: Smaller community, less mature
+
+DECISION: Gemini for cost-effectiveness and ease of integration
+
+
+10.5 MARKET DATA: YAHOO FINANCE
+--------------------------------------------------------------------------------
+
+CHOICE: yfinance library (Yahoo Finance API)
+
+JUSTIFICATION:
+
+1. FREE & ACCESSIBLE
+   - No API key required
+   - No cost for reasonable usage
+   - Ideal for MVP and education
+
+2. COMPREHENSIVE DATA
+   - Real-time quotes (15-min delay)
+   - Historical data
+   - Fundamentals (P/E, dividends, etc.)
+   - Analyst recommendations
+
+3. EASE OF USE
+   - Simple Python library
+   - Well-documented
+   - Active maintenance
+
+4. SUFFICIENT FOR USE CASE
+   - Educational/advisory platform (not trading)
+   - 15-minute delay acceptable
+   - Focus on Indian market covered
+
+LIMITATIONS & MITIGATION:
+- Unofficial API (could change): Cache data, have fallback
+- Rate limits: Implement caching, respectful usage
+- Best-effort availability: Error handling, graceful degradation
+
+ALTERNATIVES CONSIDERED:
+- Alpha Vantage: Free tier too limited (25 req/day)
+- IEX Cloud: Paid only, expensive
+- Polygon.io: Paid, overkill for MVP
+- NSE/BSE APIs: Complex authentication, limited data
+
+DECISION: Yahoo Finance for free, comprehensive data
+
+
+10.6 ASYNC PROCESSING: PYTHON ASYNCIO
+--------------------------------------------------------------------------------
+
+CHOICE: Native Python asyncio
+
+JUSTIFICATION:
+
+1. CONCURRENCY WITHOUT THREADS
+   - Single-threaded async model
+   - Efficient for I/O-bound tasks
+   - No race conditions, simpler debugging
+
+2. NATIVE PYTHON SUPPORT
+   - No external dependencies
+   - Works seamlessly with FastAPI
+   - Modern Python standard (3.7+)
+
+3. PERFORMANCE
+   - Can handle thousands of concurrent connections
+   - Low memory overhead per task
+   - Efficient for API calls, DB queries
+
+4. ECOSYSTEM
+   - asyncpg (async PostgreSQL driver)
+   - aiohttp (async HTTP client)
+   - Many libraries support async
+
+EXAMPLE BENEFIT:
+
+# Sequential (slow)
+result1 = fetch_stock_data("AAPL")       # 2s
+result2 = fetch_stock_data("MSFT")       # 2s
+result3 = fetch_educational_content()    # 1s
+# Total: 5 seconds
+
+# Async (fast)
+result1, result2, result3 = await asyncio.gather(
+    fetch_stock_data("AAPL"),            # \
+    fetch_stock_data("MSFT"),            #  | All run in parallel
+    fetch_educational_content()          # /
+)
+# Total: 2 seconds (max of all tasks)
+
+DECISION: asyncio for efficient concurrent I/O operations
+
+
+10.7 ORM: SQLALCHEMY (ASYNC)
+--------------------------------------------------------------------------------
+
+CHOICE: SQLAlchemy 2.0+ (async mode)
+
+JUSTIFICATION:
+
+1. INDUSTRY STANDARD
+   - Most popular Python ORM
+   - Battle-tested in production
+   - Extensive documentation
+
+2. ASYNC SUPPORT
+   - Native async/await support (v2.0+)
+   - Works with asyncpg driver
+   - Non-blocking database operations
+
+3. FLEXIBILITY
+   - Can use ORM or raw SQL when needed
+   - Complex query support
+   - Relationship management
+
+4. TYPE SAFETY
+   - Modern type hints support
+   - IDE autocomplete
+   - Fewer runtime errors
+
+5. MIGRATIONS
+   - Alembic integration for schema migrations
+   - Version control for database schema
+
+ALTERNATIVES CONSIDERED:
+- Django ORM: Tied to Django framework
+- Tortoise ORM: Less mature, smaller community
+- Raw SQL: Too low-level, no type safety
+
+DECISION: SQLAlchemy for maturity and async support
+
+
+10.8 TECHNOLOGY STACK SUMMARY
+--------------------------------------------------------------------------------
+
+┌──────────────────────┬────────────────────┬─────────────────────┐
+│ Component            │ Technology         │ Primary Reason      │
+├──────────────────────┼────────────────────┼─────────────────────┤
+│ Backend Framework    │ FastAPI            │ Performance + Async │
+│ Database             │ PostgreSQL 15+     │ Robust + ACID       │
+│ Vector Search        │ pgvector           │ Unified data store  │
+│ LLM Framework        │ DSPy               │ Structured prompts  │
+│ LLM Provider         │ Google Gemini      │ Cost-effective      │
+│ Embeddings           │ Gemini embedding   │ Same provider       │
+│ Market Data          │ Yahoo Finance      │ Free + comprehensive│
+│ ORM                  │ SQLAlchemy (async) │ Industry standard   │
+│ Password Hashing     │ bcrypt             │ Designed for pwds   │
+│ Authentication       │ JWT (PyJWT)        │ Stateless tokens    │
+│ Input Validation     │ Pydantic           │ Type safety         │
+│ Async Runtime        │ Python asyncio     │ Native support      │
+│ HTTP Client          │ httpx/aiohttp      │ Async HTTP          │
+│ Database Driver      │ asyncpg            │ Fast async PG       │
+│ Migrations           │ Alembic            │ Schema versioning   │
+└──────────────────────┴────────────────────┴─────────────────────┘
+
+
+--- DIAGRAM 10.1: TECHNOLOGY STACK ---
+
+[MERMAID CODE - Copy this to Mermaid Live Editor]
+
+graph TB
+    subgraph Client["Client Layer"]
+        WEB[Web Browser<br/>React/Vue/Angular]
+    end
+    
+    subgraph API["API Layer"]
+        FASTAPI[FastAPI Framework<br/>Python 3.11]
+        PYDANTIC[Pydantic<br/>Validation]
+        JWT_LIB[PyJWT<br/>Authentication]
+    end
+    
+    subgraph Business["Business Logic Layer"]
+        DSPY[DSPy Framework<br/>LLM Orchestration]
+        AGENTS[Multi-Agent System<br/>Specialized Agents]
+        SQLALCHEMY[SQLAlchemy ORM<br/>Async Mode]
+    end
+    
+    subgraph External["External Services"]
+        GEMINI[Google Gemini API<br/>LLM + Embeddings]
+        YAHOO[Yahoo Finance API<br/>Market Data]
+    end
+    
+    subgraph Data["Data Layer"]
+        POSTGRES[(PostgreSQL 15+<br/>ACID Database)]
+        PGVECTOR[pgvector Extension<br/>Vector Search]
+    end
+    
+    WEB -->|HTTPS/JSON| FASTAPI
+    FASTAPI --> PYDANTIC
+    FASTAPI --> JWT_LIB
+    FASTAPI --> DSPY
+    
+    DSPY --> AGENTS
+    DSPY --> GEMINI
+    
+    AGENTS --> SQLALCHEMY
+    AGENTS --> YAHOO
+    AGENTS --> GEMINI
+    
+    SQLALCHEMY --> POSTGRES
+    POSTGRES --> PGVECTOR
+    
+    style FASTAPI fill:#009688
+    style DSPY fill:#4ECDC4
+    style GEMINI fill:#FF6B6B
+    style POSTGRES fill:#2ECC71
+
+[END MERMAID CODE]
+
+
+================================================================================
+
+11. FUTURE ENHANCEMENTS
+--------------------------------------------------------------------------------
+
+PURPOSE: Planned features and improvements beyond MVP
+
+This section outlines potential enhancements for future versions of FinMentor AI.
+
+
+11.1 PLANNED FEATURES (VERSION 2.0)
+--------------------------------------------------------------------------------
+
+11.1.1 ADVANCED PORTFOLIO FEATURES
+
+1. REAL-TIME PORTFOLIO TRACKING
+   - Track user's actual holdings
+   - Real-time P&L calculations
+   - Performance attribution analysis
+   - Rebalancing recommendations
+
+IMPLEMENTATION APPROACH:
+   - Add Holdings table to track user positions
+   - Scheduled job to fetch daily prices
+   - Calculate metrics: returns, volatility, drawdown
+   - Alert system for rebalancing opportunities
+
+2. BACKTESTING ENGINE
+   - Test portfolio strategies on historical data
+   - Compare actual vs expected returns
+   - Risk-adjusted performance metrics
+   - Monte Carlo simulations
+
+3. TAX OPTIMIZATION
+   - Tax-loss harvesting suggestions
+   - Capital gains estimation
+   - Tax-efficient fund placement
+   - Integration with tax brackets
+
+
+11.1.2 ENHANCED AI CAPABILITIES
+
+1. MULTI-MODAL SUPPORT
+   - Accept financial documents (PDFs, images)
+   - OCR for processing statements
+   - Chart/graph analysis
+   - Voice input support
+
+2. SENTIMENT ANALYSIS
+   - News sentiment for stocks
+   - Social media sentiment tracking
+   - Real-time market mood indicator
+   - Impact on recommendations
+
+3. PERSONALIZED LEARNING
+   - Adaptive educational content
+   - Track user knowledge level
+   - Progressive difficulty
+   - Gamification elements
+
+
+11.1.3 SOCIAL FEATURES
+
+1. COMMUNITY INSIGHTS
+   - Anonymous portfolio benchmarking
+   - Compare with peer groups
+   - Popular investment trends
+   - Wisdom of the crowd indicators
+
+2. EXPERT NETWORK
+   - Connect with certified advisors
+   - Q&A with experts
+   - Webinars and workshops
+   - Mentorship programs
+
+
+11.2 TECHNICAL IMPROVEMENTS
+--------------------------------------------------------------------------------
+
+11.2.1 PERFORMANCE OPTIMIZATION
+
+1. CACHING LAYER
+   - Redis for distributed caching
+   - Cache LLM responses for common queries
+   - Pre-computed portfolio templates
+   - CDN for static assets
+
+EXPECTED IMPACT:
+   - 50% reduction in response time for repeated queries
+   - 70% reduction in LLM API costs
+   - Better handling of traffic spikes
+
+2. DATABASE OPTIMIZATION
+   - Read replicas for scaling
+   - Partitioning for large tables (messages)
+   - Materialized views for analytics
+   - Query optimization and indexing
+
+3. LLM OPTIMIZATION
+   - Prompt caching
+   - Smaller models for simple queries
+   - Response streaming
+   - Batch processing where possible
+
+
+11.2.2 INFRASTRUCTURE SCALING
+
+1. HORIZONTAL SCALING
+   - Multiple API server instances
+   - Load balancer (NGINX/HAProxy)
+   - Auto-scaling based on traffic
+   - Container orchestration (Kubernetes)
+
+2. MICROSERVICES ARCHITECTURE
+   - Separate service for each agent
+   - Independent scaling per service
+   - Better fault isolation
+   - Technology diversity (polyglot)
+
+CURRENT (MONOLITH):
+┌─────────────────────────────────┐
+│   Single FastAPI Application   │
+│                                 │
+│  - Query Router                 │
+│  - Educational Agent            │
+│  - Market Data Agent            │
+│  - Portfolio Builder            │
+│  - RAG System                   │
+└─────────────────────────────────┘
+
+FUTURE (MICROSERVICES):
+┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+│   Gateway    │  │ Educational  │  │ Market Data  │
+│   Service    │→ │    Service   │  │   Service    │
+└──────────────┘  └──────────────┘  └──────────────┘
+       ↓
+┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+│  Portfolio   │  │  RAG Service │  │  User Service│
+│   Service    │  │              │  │              │
+└──────────────┘  └──────────────┘  └──────────────┘
+
+
+11.2.3 OBSERVABILITY
+
+1. COMPREHENSIVE MONITORING
+   - Metrics: Prometheus
+   - Logs: ELK Stack (Elasticsearch, Logstash, Kibana)
+   - Traces: OpenTelemetry
+   - Dashboards: Grafana
+
+2. KEY METRICS TO TRACK
+   - Request latency (p50, p95, p99)
+   - Error rates by endpoint
+   - LLM token usage and costs
+   - Database query performance
+   - Cache hit rates
+   - User engagement metrics
+
+3. ALERTING
+   - High error rate alerts
+   - Performance degradation
+   - Cost anomalies
+   - Security events
+
+
+11.3 ADDITIONAL DATA SOURCES
+--------------------------------------------------------------------------------
+
+11.3.1 PREMIUM DATA PROVIDERS
+
+1. FINANCIAL DATA
+   - Bloomberg Terminal integration
+   - Reuters data feeds
+   - S&P Capital IQ
+   - Morningstar data
+
+2. ALTERNATIVE DATA
+   - Satellite imagery (retail traffic)
+   - Credit card transaction data
+   - Web scraping (sentiment)
+   - Social media signals
+
+3. FUNDAMENTAL DATA
+   - Company filings (10-K, 10-Q)
+   - Earnings call transcripts
+   - Insider trading data
+   - Short interest data
+
+
+11.3.2 REAL-TIME NEWS INTEGRATION
+
+- News aggregation from multiple sources
+- NLP for topic extraction
+- Impact analysis on portfolio holdings
+- Alert system for relevant news
+
+
+11.4 MOBILE APPLICATION
+--------------------------------------------------------------------------------
+
+11.4.1 NATIVE MOBILE APPS
+
+PLATFORMS: iOS and Android
+
+FEATURES:
+- Full chat interface
+- Portfolio tracking
+- Push notifications for alerts
+- Biometric authentication
+- Offline mode (cached data)
+
+TECHNOLOGY STACK:
+- React Native (cross-platform)
+- or Flutter (Google's framework)
+
+BENEFITS:
+- Better user experience
+- Access on-the-go
+- Native device features (biometrics, notifications)
+- Wider user reach
+
+
+11.5 REGULATORY COMPLIANCE
+--------------------------------------------------------------------------------
+
+11.5.1 FINANCIAL ADVISOR LICENSING
+
+CONSIDERATION: If platform provides personalized investment advice
+
+REQUIREMENTS:
+- Registration with SEBI (India) as Investment Advisor
+- Compliance with RIA regulations
+- Disclosure requirements
+- Fiduciary duty to clients
+
+IMPLEMENTATION:
+- Legal review of all advice
+- Clear disclaimers
+- Audit trail for all recommendations
+- Compliance monitoring
+
+
+11.5.2 DATA COMPLIANCE
+
+- SOC 2 Type II certification
+- ISO 27001 (Information Security)
+- PCI DSS (if handling payments)
+- Regular security audits
+
+
+11.6 INTERNATIONALIZATION
+--------------------------------------------------------------------------------
+
+11.6.1 MULTI-LANGUAGE SUPPORT
+
+LANGUAGES TO SUPPORT:
+- English (default)
+- Hindi
+- Regional Indian languages (Marathi, Tamil, Telugu, etc.)
+- Spanish (international expansion)
+
+IMPLEMENTATION:
+- i18n libraries
+- LLM-based translation
+- Localized content
+- Currency conversion
+
+
+11.6.2 MULTI-MARKET SUPPORT
+
+MARKETS:
+- Indian markets (NSE, BSE) - Current
+- US markets (NYSE, NASDAQ) - Planned
+- European markets - Future
+- Asian markets - Future
+
+CHALLENGES:
+- Different market hours
+- Currency conversions
+- Tax implications
+- Regulatory differences
+
+
+11.7 BUSINESS FEATURES
+--------------------------------------------------------------------------------
+
+11.7.1 MONETIZATION STRATEGIES
+
+1. FREEMIUM MODEL
+   - Free tier: Limited queries/month
+   - Premium tier: Unlimited access
+   - Professional tier: Advanced features
+
+2. SUBSCRIPTION TIERS
+   - Basic: $9.99/month (100 queries)
+   - Pro: $29.99/month (Unlimited queries + portfolio tracking)
+   - Enterprise: Custom pricing (API access, white-label)
+
+3. ADDITIONAL REVENUE STREAMS
+   - Affiliate commissions (broker referrals)
+   - Sponsored educational content
+   - API access for third parties
+   - White-label solutions for advisors
+
+
+11.7.2 ADMIN DASHBOARD
+
+FEATURES:
+- User analytics and metrics
+- System health monitoring
+- Content management (educational library)
+- User support tools
+- Revenue tracking
+- A/B testing interface
+
+
+11.8 DEVELOPMENT ROADMAP
+--------------------------------------------------------------------------------
+
+TIMELINE:
+
+Q1 2026 (3 months):
+- ✓ Complete MVP (current work)
+- ✓ Beta testing with 50 users
+- ✓ Bug fixes and optimizations
+
+Q2 2026 (3 months):
+- Public launch (1000 users target)
+- Mobile app development start
+- Premium tier introduction
+- Advanced portfolio tracking
+
+Q3 2026 (3 months):
+- Mobile app launch (iOS + Android)
+- Sentiment analysis integration
+- News feed implementation
+- 10,000 users target
+
+Q4 2026 (3 months):
+- Microservices migration
+- International expansion (US market)
+- Backtesting engine
+- 50,000 users target
+
+2027 (Year 2):
+- AI improvements (multimodal support)
+- Community features
+- Regulatory compliance (SEBI registration)
+- 200,000 users target
+
+
+--- DIAGRAM 11.1: FUTURE ARCHITECTURE (MICROSERVICES) ---
+
+[MERMAID CODE - Copy this to Mermaid Live Editor]
+
+graph TB
+    subgraph Clients["Client Applications"]
+        WEB[Web App]
+        IOS[iOS App]
+        ANDROID[Android App]
+    end
+    
+    subgraph Gateway["API Gateway"]
+        LB[Load Balancer<br/>NGINX]
+        AUTH[Auth Service<br/>JWT Validation]
+    end
+    
+    subgraph Microservices["Microservices"]
+        CHAT[Chat Service<br/>Message Handling]
+        EDU[Education Service<br/>Content Delivery]
+        MARKET[Market Data Service<br/>Yahoo Finance]
+        PORT[Portfolio Service<br/>Generation & Tracking]
+        RAG[RAG Service<br/>Vector Search]
+        USER[User Service<br/>Profile Management]
+    end
+    
+    subgraph Data["Data Layer"]
+        REDIS[(Redis<br/>Cache)]
+        PG_MAIN[(PostgreSQL<br/>Main DB)]
+        PG_READ[(PostgreSQL<br/>Read Replica)]
+    end
+    
+    subgraph External["External Services"]
+        GEMINI[Google Gemini]
+        YAHOO[Yahoo Finance]
+        NEWS[News APIs]
+    end
+    
+    WEB --> LB
+    IOS --> LB
+    ANDROID --> LB
+    
+    LB --> AUTH
+    AUTH --> CHAT
+    AUTH --> USER
+    
+    CHAT --> EDU
+    CHAT --> MARKET
+    CHAT --> PORT
+    CHAT --> RAG
+    
+    EDU --> REDIS
+    EDU --> PG_READ
+    
+    MARKET --> YAHOO
+    MARKET --> REDIS
+    
+    PORT --> MARKET
+    PORT --> PG_MAIN
+    
+    RAG --> GEMINI
+    RAG --> PG_READ
+    
+    USER --> PG_MAIN
+    
+    style LB fill:#4ECDC4
+    style GEMINI fill:#FF6B6B
+    style PG_MAIN fill:#2ECC71
+
+[END MERMAID CODE]
+
+
+================================================================================
+
+SUMMARY: SECTIONS 10 & 11
+================================================================================
+
+SECTION 10: TECHNOLOGY JUSTIFICATION
+- FastAPI: Performance + async + productivity
+- PostgreSQL + pgvector: Unified data store
+- DSPy: Structured LLM interactions
+- Google Gemini: Cost-effective LLM
+- Yahoo Finance: Free comprehensive market data
+- Python asyncio: Efficient concurrency
+- SQLAlchemy: Industry-standard ORM
+- Technology stack summary table
+- Complete stack diagram
+
+SECTION 11: FUTURE ENHANCEMENTS
+- V2.0 Features:
+  * Real-time portfolio tracking
+  * Backtesting engine
+  * Tax optimization
+  * Multi-modal AI support
+  * Sentiment analysis
+  * Community features
+  
+- Technical Improvements:
+  * Redis caching layer
+  * Database optimization (replicas, partitioning)
+  * Microservices architecture
+  * Comprehensive monitoring (Prometheus, Grafana)
+  
+- Additional Features:
+  * Premium data sources
+  * Mobile apps (iOS/Android)
+  * Multi-language support
+  * International markets
+  
+- Business Features:
+  * Freemium monetization
+  * Subscription tiers ($9.99 - $29.99/month)
+  * Admin dashboard
+  
+- Development Roadmap:
+  * Q1 2026: MVP + Beta (50 users)
+  * Q2 2026: Public launch (1000 users)
+  * Q3 2026: Mobile apps (10K users)
+  * Q4 2026: Microservices (50K users)
+  * 2027: 200K users target
+
+1 Mermaid Diagram:
+- Future microservices architecture
+
+================================================================================
+
+SECTIONS 10 & 11 - COMPLETE! ✅
+
+Document is nearly complete! 
+Remaining: Appendices, References, Conclusion (optional)

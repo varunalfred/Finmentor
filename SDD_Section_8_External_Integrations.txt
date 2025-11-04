@@ -1,0 +1,1020 @@
+================================================================================
+                    SYSTEM DESIGN DOCUMENT - SECTION 8
+                        EXTERNAL INTEGRATIONS
+================================================================================
+
+8. EXTERNAL INTEGRATIONS
+--------------------------------------------------------------------------------
+
+PURPOSE: Integration with third-party services and APIs
+
+This section documents how FinMentor AI integrates with external services
+including market data providers, LLM APIs, and other third-party systems.
+
+
+8.1 YAHOO FINANCE INTEGRATION
+--------------------------------------------------------------------------------
+
+8.1.1 OVERVIEW
+
+PURPOSE: Real-time and historical stock market data
+
+LIBRARY: yfinance (Python wrapper for Yahoo Finance API)
+VERSION: 0.2.28+
+
+DATA CAPABILITIES:
+- Real-time stock quotes
+- Historical price data
+- Company fundamentals (P/E ratio, market cap, etc.)
+- Dividend information
+- Financial statements
+- Technical indicators
+- Analyst recommendations
+
+
+8.1.2 INTEGRATION ARCHITECTURE
+
+┌────────────────────────────────────────────────────────┐
+│  FinMentor AI Application                              │
+│                                                        │
+│  ┌──────────────────────────────────────────┐          │
+│  │  Market Data Agent                       │          │
+│  │                                          │          │
+│  │  ┌────────────────────────────────┐     │          │
+│  │  │  Yahoo Finance Service         │     │          │
+│  │  │  - Data fetching               │     │          │
+│  │  │  - Caching                     │     │          │
+│  │  │  - Error handling              │     │          │
+│  │  │  - Rate limiting               │     │          │
+│  │  └────────────────────────────────┘     │          │
+│  └──────────────────────────────────────────┘          │
+└────────────────────────────────────────────────────────┘
+                         │
+                         │ HTTPS
+                         │
+                         ↓
+┌────────────────────────────────────────────────────────┐
+│  Yahoo Finance API                                     │
+│  (query2.finance.yahoo.com)                            │
+│                                                        │
+│  - No API key required (public)                        │
+│  - Rate limited (unofficial: ~2000 req/hour)           │
+│  - Best-effort availability                            │
+└────────────────────────────────────────────────────────┘
+
+
+8.1.3 DATA FETCHING IMPLEMENTATION
+
+# services/data_sources.py
+
+import yfinance as yf
+from typing import Dict, List, Optional
+from datetime import datetime, timedelta
+import asyncio
+from functools import lru_cache
+
+class YahooFinanceService:
+    """Service for fetching market data from Yahoo Finance"""
+    
+    def __init__(self):
+        self.cache_ttl = 300  # 5 minutes cache
+        self._cache = {}
+    
+    async def get_stock_quote(self, symbol: str) -> Dict:
+        """
+        Fetch current stock quote
+        
+        Args:
+            symbol: Stock ticker symbol (e.g., "AAPL")
+        
+        Returns:
+            Dict with current price, volume, market cap, etc.
+        """
+        # Check cache first
+        cache_key = f"quote_{symbol}"
+        if self._is_cache_valid(cache_key):
+            return self._cache[cache_key]["data"]
+        
+        try:
+            # Fetch from Yahoo Finance
+            # Run in thread pool (yfinance is synchronous)
+            ticker = await asyncio.to_thread(yf.Ticker, symbol)
+            info = await asyncio.to_thread(lambda: ticker.info)
+            
+            # Extract relevant data
+            quote_data = {
+                "symbol": symbol,
+                "company_name": info.get("longName", ""),
+                "current_price": info.get("currentPrice", 0),
+                "previous_close": info.get("previousClose", 0),
+                "open": info.get("open", 0),
+                "day_high": info.get("dayHigh", 0),
+                "day_low": info.get("dayLow", 0),
+                "volume": info.get("volume", 0),
+                "market_cap": info.get("marketCap", 0),
+                "pe_ratio": info.get("trailingPE", None),
+                "forward_pe": info.get("forwardPE", None),
+                "dividend_yield": info.get("dividendYield", 0),
+                "dividend_rate": info.get("dividendRate", 0),
+                "beta": info.get("beta", None),
+                "52_week_high": info.get("fiftyTwoWeekHigh", 0),
+                "52_week_low": info.get("fiftyTwoWeekLow", 0),
+                "avg_volume": info.get("averageVolume", 0),
+                "sector": info.get("sector", ""),
+                "industry": info.get("industry", ""),
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+            # Update cache
+            self._cache[cache_key] = {
+                "data": quote_data,
+                "cached_at": datetime.utcnow()
+            }
+            
+            return quote_data
+            
+        except Exception as e:
+            logger.error(f"Failed to fetch quote for {symbol}: {e}")
+            raise MarketDataError(f"Could not fetch data for {symbol}")
+    
+    async def get_historical_data(
+        self,
+        symbol: str,
+        period: str = "1y"
+    ) -> Dict:
+        """
+        Fetch historical price data
+        
+        Args:
+            symbol: Stock ticker symbol
+            period: Time period (1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, max)
+        
+        Returns:
+            Dict with historical OHLCV data
+        """
+        cache_key = f"history_{symbol}_{period}"
+        if self._is_cache_valid(cache_key):
+            return self._cache[cache_key]["data"]
+        
+        try:
+            ticker = await asyncio.to_thread(yf.Ticker, symbol)
+            history = await asyncio.to_thread(
+                ticker.history,
+                period=period
+            )
+            
+            # Convert to dict format
+            historical_data = {
+                "symbol": symbol,
+                "period": period,
+                "data": [
+                    {
+                        "date": idx.strftime("%Y-%m-%d"),
+                        "open": row["Open"],
+                        "high": row["High"],
+                        "low": row["Low"],
+                        "close": row["Close"],
+                        "volume": row["Volume"]
+                    }
+                    for idx, row in history.iterrows()
+                ],
+                "retrieved_at": datetime.utcnow().isoformat()
+            }
+            
+            # Cache for longer (historical data doesn't change)
+            self._cache[cache_key] = {
+                "data": historical_data,
+                "cached_at": datetime.utcnow()
+            }
+            
+            return historical_data
+            
+        except Exception as e:
+            logger.error(f"Failed to fetch history for {symbol}: {e}")
+            raise MarketDataError(f"Could not fetch history for {symbol}")
+    
+    async def get_analyst_recommendations(self, symbol: str) -> Dict:
+        """Fetch analyst recommendations"""
+        try:
+            ticker = await asyncio.to_thread(yf.Ticker, symbol)
+            recommendations = await asyncio.to_thread(
+                lambda: ticker.recommendations
+            )
+            
+            if recommendations is None or recommendations.empty:
+                return {"symbol": symbol, "recommendations": []}
+            
+            # Get latest recommendation
+            latest = recommendations.iloc[-1]
+            
+            return {
+                "symbol": symbol,
+                "firm": latest.get("Firm", ""),
+                "to_grade": latest.get("To Grade", ""),
+                "action": latest.get("Action", ""),
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+        except Exception as e:
+            logger.warning(f"No recommendations for {symbol}: {e}")
+            return {"symbol": symbol, "recommendations": []}
+    
+    async def get_multiple_quotes(
+        self,
+        symbols: List[str]
+    ) -> Dict[str, Dict]:
+        """
+        Fetch quotes for multiple symbols in parallel
+        
+        Args:
+            symbols: List of ticker symbols
+        
+        Returns:
+            Dict mapping symbol to quote data
+        """
+        # Fetch all quotes concurrently
+        tasks = [self.get_stock_quote(symbol) for symbol in symbols]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Build result dict
+        quotes = {}
+        for symbol, result in zip(symbols, results):
+            if isinstance(result, Exception):
+                logger.error(f"Failed to fetch {symbol}: {result}")
+                quotes[symbol] = None
+            else:
+                quotes[symbol] = result
+        
+        return quotes
+    
+    def _is_cache_valid(self, cache_key: str) -> bool:
+        """Check if cached data is still valid"""
+        if cache_key not in self._cache:
+            return False
+        
+        cached_at = self._cache[cache_key]["cached_at"]
+        age = (datetime.utcnow() - cached_at).total_seconds()
+        
+        return age < self.cache_ttl
+
+
+8.1.4 TECHNICAL INDICATORS CALCULATION
+
+def calculate_rsi(prices: List[float], period: int = 14) -> float:
+    """
+    Calculate Relative Strength Index
+    
+    RSI = 100 - (100 / (1 + RS))
+    where RS = Average Gain / Average Loss over period
+    """
+    if len(prices) < period + 1:
+        return 50.0  # Neutral RSI if insufficient data
+    
+    # Calculate price changes
+    deltas = [prices[i] - prices[i-1] for i in range(1, len(prices))]
+    
+    # Separate gains and losses
+    gains = [d if d > 0 else 0 for d in deltas]
+    losses = [-d if d < 0 else 0 for d in deltas]
+    
+    # Calculate average gain and loss
+    avg_gain = sum(gains[-period:]) / period
+    avg_loss = sum(losses[-period:]) / period
+    
+    if avg_loss == 0:
+        return 100.0  # Maximum RSI
+    
+    rs = avg_gain / avg_loss
+    rsi = 100 - (100 / (1 + rs))
+    
+    return round(rsi, 2)
+
+
+def calculate_moving_average(
+    prices: List[float],
+    period: int
+) -> Optional[float]:
+    """Calculate Simple Moving Average"""
+    if len(prices) < period:
+        return None
+    
+    recent_prices = prices[-period:]
+    return sum(recent_prices) / period
+
+
+def calculate_volatility(prices: List[float]) -> float:
+    """
+    Calculate annualized volatility (standard deviation of returns)
+    """
+    if len(prices) < 2:
+        return 0.0
+    
+    # Calculate daily returns
+    returns = [
+        (prices[i] - prices[i-1]) / prices[i-1]
+        for i in range(1, len(prices))
+    ]
+    
+    # Calculate standard deviation
+    mean_return = sum(returns) / len(returns)
+    variance = sum((r - mean_return) ** 2 for r in returns) / len(returns)
+    daily_volatility = variance ** 0.5
+    
+    # Annualize (assuming 252 trading days)
+    annual_volatility = daily_volatility * (252 ** 0.5) * 100
+    
+    return round(annual_volatility, 2)
+
+
+8.1.5 ERROR HANDLING & RESILIENCE
+
+ERROR SCENARIOS:
+
+1. Invalid Symbol
+   Error: "No data found for symbol XYZ"
+   Response: Return user-friendly error, suggest similar symbols
+
+2. Rate Limiting
+   Error: HTTP 429 Too Many Requests
+   Response: Exponential backoff, use cached data
+
+3. Network Timeout
+   Error: Connection timeout
+   Response: Retry with exponential backoff (max 3 attempts)
+
+4. Incomplete Data
+   Error: Missing fields in response
+   Response: Use default values, flag as incomplete
+
+
+IMPLEMENTATION:
+
+async def fetch_with_retry(
+    fetch_func,
+    max_retries: int = 3,
+    base_delay: float = 1.0
+):
+    """Retry logic with exponential backoff"""
+    
+    for attempt in range(max_retries):
+        try:
+            return await fetch_func()
+            
+        except HTTPError as e:
+            if e.status_code == 429:  # Rate limit
+                # Exponential backoff
+                delay = base_delay * (2 ** attempt)
+                logger.warning(f"Rate limited, retry in {delay}s")
+                await asyncio.sleep(delay)
+                continue
+            else:
+                raise
+        
+        except TimeoutError:
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)
+                logger.warning(f"Timeout, retry in {delay}s")
+                await asyncio.sleep(delay)
+                continue
+            else:
+                raise
+    
+    raise MarketDataError("Max retries exceeded")
+
+
+8.2 GOOGLE GEMINI API INTEGRATION
+--------------------------------------------------------------------------------
+
+8.2.1 OVERVIEW
+
+PURPOSE: Large Language Model for text generation and embeddings
+
+API: Google Generative AI (Gemini)
+MODELS USED:
+- gemini-1.5-flash (text generation)
+- embedding-001 (text embeddings)
+
+CAPABILITIES:
+- Natural language understanding
+- Response generation
+- Text embeddings (1536 dimensions)
+- Instruction following
+- Context-aware responses
+
+
+8.2.2 INTEGRATION ARCHITECTURE
+
+┌────────────────────────────────────────────────────────┐
+│  FinMentor AI Application                              │
+│                                                        │
+│  ┌──────────────────────────────────────────┐          │
+│  │  DSPy Framework                          │          │
+│  │                                          │          │
+│  │  ┌────────────────────────────────┐     │          │
+│  │  │  Agent Signatures              │     │          │
+│  │  │  - Educational                 │     │          │
+│  │  │  - Market Data                 │     │          │
+│  │  │  - Portfolio Builder           │     │          │
+│  │  └────────────────────────────────┘     │          │
+│  └──────────────────────────────────────────┘          │
+│                    │                                   │
+│  ┌─────────────────┴──────────────────────┐            │
+│  │  Gemini Service Wrapper                │            │
+│  │  - Token counting                      │            │
+│  │  - Rate limiting                       │            │
+│  │  - Error handling                      │            │
+│  │  - Response parsing                    │            │
+│  └────────────────────────────────────────┘            │
+└────────────────────────────────────────────────────────┘
+                         │
+                         │ HTTPS + API Key
+                         │
+                         ↓
+┌────────────────────────────────────────────────────────┐
+│  Google Gemini API                                     │
+│  (generativelanguage.googleapis.com)                   │
+│                                                        │
+│  - API Key authentication                              │
+│  - Rate limit: 1500 requests/day (free tier)           │
+│  - 10 requests per minute                              │
+└────────────────────────────────────────────────────────┘
+
+
+8.2.3 TEXT GENERATION IMPLEMENTATION
+
+import google.generativeai as genai
+from typing import Dict, List, Optional
+
+class GeminiService:
+    """Service for Google Gemini API interactions"""
+    
+    def __init__(self, api_key: str):
+        genai.configure(api_key=api_key)
+        self.model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        # Rate limiting
+        self.rate_limiter = RateLimiter(
+            max_requests_per_minute=10,
+            max_requests_per_day=1500
+        )
+    
+    async def generate_text(
+        self,
+        prompt: str,
+        system_instruction: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 2048
+    ) -> str:
+        """
+        Generate text response from Gemini
+        
+        Args:
+            prompt: User input/question
+            system_instruction: System-level instructions
+            temperature: Randomness (0-1)
+            max_tokens: Maximum response length
+        
+        Returns:
+            Generated text response
+        """
+        # Check rate limit
+        await self.rate_limiter.acquire()
+        
+        try:
+            # Build full prompt
+            if system_instruction:
+                full_prompt = f"{system_instruction}\n\n{prompt}"
+            else:
+                full_prompt = prompt
+            
+            # Generate response
+            response = await asyncio.to_thread(
+                self.model.generate_content,
+                full_prompt,
+                generation_config={
+                    'temperature': temperature,
+                    'max_output_tokens': max_tokens,
+                }
+            )
+            
+            # Extract text
+            generated_text = response.text
+            
+            # Track usage
+            self._log_usage(
+                prompt_tokens=len(full_prompt.split()),
+                completion_tokens=len(generated_text.split())
+            )
+            
+            return generated_text
+            
+        except Exception as e:
+            logger.error(f"Gemini generation failed: {e}")
+            raise LLMError(f"Failed to generate response: {e}")
+    
+    async def generate_embedding(self, text: str) -> List[float]:
+        """
+        Generate embedding vector for text
+        
+        Args:
+            text: Input text to embed
+        
+        Returns:
+            1536-dimensional embedding vector
+        """
+        await self.rate_limiter.acquire()
+        
+        try:
+            result = await asyncio.to_thread(
+                genai.embed_content,
+                model="models/embedding-001",
+                content=text,
+                task_type="retrieval_document"
+            )
+            
+            embedding = result['embedding']
+            
+            # Validate dimensionality
+            if len(embedding) != 1536:
+                raise ValueError(f"Unexpected embedding size: {len(embedding)}")
+            
+            return embedding
+            
+        except Exception as e:
+            logger.error(f"Embedding generation failed: {e}")
+            raise LLMError(f"Failed to generate embedding: {e}")
+    
+    async def generate_batch_embeddings(
+        self,
+        texts: List[str]
+    ) -> List[List[float]]:
+        """Generate embeddings for multiple texts"""
+        # Process in batches to respect rate limits
+        batch_size = 10
+        all_embeddings = []
+        
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i + batch_size]
+            
+            # Generate embeddings concurrently within batch
+            tasks = [self.generate_embedding(text) for text in batch]
+            embeddings = await asyncio.gather(*tasks)
+            
+            all_embeddings.extend(embeddings)
+            
+            # Small delay between batches
+            if i + batch_size < len(texts):
+                await asyncio.sleep(0.5)
+        
+        return all_embeddings
+
+
+8.2.4 DSPY INTEGRATION
+
+DSPy acts as an abstraction layer over Gemini:
+
+# Initialize DSPy with Gemini
+import dspy
+
+gemini_lm = dspy.Google(
+    model="gemini-1.5-flash",
+    api_key=settings.GEMINI_API_KEY,
+    temperature=0.7
+)
+
+dspy.settings.configure(lm=gemini_lm)
+
+# Define signature
+class EducationalResponse(dspy.Signature):
+    """Generate educational content"""
+    user_query = dspy.InputField()
+    context = dspy.InputField()
+    user_level = dspy.InputField(desc="beginner, intermediate, or advanced")
+    
+    explanation = dspy.OutputField(desc="Clear, educational explanation")
+    examples = dspy.OutputField(desc="Real-world examples")
+    confidence = dspy.OutputField(desc="Confidence score 0-1")
+
+# Use in agent
+class EducationalAgent(dspy.Module):
+    def __init__(self):
+        super().__init__()
+        self.generate = dspy.ChainOfThought(EducationalResponse)
+    
+    def forward(self, query, context, level):
+        result = self.generate(
+            user_query=query,
+            context=context,
+            user_level=level
+        )
+        return result
+
+
+8.2.5 TOKEN MANAGEMENT & COST OPTIMIZATION
+
+TOKEN LIMITS:
+- Input: 32,000 tokens (gemini-1.5-flash)
+- Output: 8,192 tokens maximum
+
+COST OPTIMIZATION STRATEGIES:
+
+1. Prompt Compression
+   - Remove unnecessary context
+   - Summarize long conversation history
+   - Use bullet points instead of prose
+
+2. Response Length Control
+   - Set appropriate max_tokens
+   - Use temperature wisely (lower = more focused)
+
+3. Caching
+   - Cache common educational content
+   - Reuse embeddings for repeated queries
+
+4. Batch Processing
+   - Batch embed multiple documents together
+   - Reduces API calls
+
+
+TOKEN COUNTING:
+
+def count_tokens(text: str) -> int:
+    """Estimate token count (rough approximation)"""
+    # Rule of thumb: 1 token ≈ 4 characters for English
+    return len(text) // 4
+
+def truncate_to_token_limit(text: str, max_tokens: int) -> str:
+    """Truncate text to fit within token limit"""
+    estimated_tokens = count_tokens(text)
+    
+    if estimated_tokens <= max_tokens:
+        return text
+    
+    # Calculate characters to keep
+    chars_to_keep = max_tokens * 4
+    return text[:chars_to_keep] + "..."
+
+
+8.3 POSTGRESQL + PGVECTOR INTEGRATION
+--------------------------------------------------------------------------------
+
+8.3.1 OVERVIEW
+
+PURPOSE: Primary database with vector similarity search
+
+COMPONENTS:
+- PostgreSQL 15+ (relational database)
+- pgvector extension (vector operations)
+- SQLAlchemy (ORM)
+- asyncpg (async driver)
+
+
+8.3.2 PGVECTOR SETUP
+
+-- Enable pgvector extension
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- Create table with vector column
+CREATE TABLE educational_content (
+    id UUID PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    content TEXT NOT NULL,
+    topic VARCHAR(100),
+    level VARCHAR(20),
+    embedding vector(1536),  -- 1536-dimensional vector
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Create ivfflat index for fast similarity search
+CREATE INDEX ON educational_content 
+USING ivfflat (embedding vector_cosine_ops)
+WITH (lists = 100);
+
+-- Lists parameter:
+-- - Too few: Slower index build, faster search
+-- - Too many: Faster index build, slower search
+-- - Rule of thumb: sqrt(num_rows)
+
+
+8.3.3 VECTOR SIMILARITY SEARCH
+
+# SQLAlchemy model
+from pgvector.sqlalchemy import Vector
+
+class EducationalContent(Base):
+    __tablename__ = "educational_content"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    title = Column(String(255))
+    content = Column(Text)
+    topic = Column(String(100))
+    level = Column(String(20))
+    embedding = Column(Vector(1536))  # Vector column
+    created_at = Column(DateTime)
+
+# Query for similar documents
+async def search_similar_content(
+    db: AsyncSession,
+    query_embedding: List[float],
+    limit: int = 5
+):
+    # Using cosine distance operator (<->)
+    stmt = select(EducationalContent).order_by(
+        EducationalContent.embedding.cosine_distance(query_embedding)
+    ).limit(limit)
+    
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
+
+DISTANCE OPERATORS:
+
+1. Cosine Distance (<->)
+   - Range: 0 (identical) to 2 (opposite)
+   - Best for: Semantic similarity
+   - Formula: 1 - cosine_similarity
+
+2. L2 Distance (<->)
+   - Euclidean distance
+   - Best for: Absolute differences
+
+3. Inner Product (<#>)
+   - Dot product (negative for descending order)
+   - Best for: Magnitude-sensitive comparisons
+
+
+8.3.4 HYBRID SEARCH (Vector + Keyword)
+
+async def hybrid_search(
+    db: AsyncSession,
+    query_text: str,
+    query_embedding: List[float],
+    topic_filter: Optional[str] = None
+):
+    """
+    Combine vector similarity with keyword filtering
+    """
+    stmt = select(EducationalContent)
+    
+    # Keyword filter
+    if topic_filter:
+        stmt = stmt.where(EducationalContent.topic == topic_filter)
+    
+    # Vector similarity ordering
+    stmt = stmt.order_by(
+        EducationalContent.embedding.cosine_distance(query_embedding)
+    ).limit(10)
+    
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
+
+8.4 INTEGRATION MONITORING & OBSERVABILITY
+--------------------------------------------------------------------------------
+
+8.4.1 PERFORMANCE METRICS
+
+Track key metrics for each integration:
+
+YAHOO FINANCE:
+- Request latency (p50, p95, p99)
+- Success rate
+- Cache hit rate
+- Rate limit encounters
+
+GEMINI API:
+- Token usage (input/output)
+- Request latency
+- Success rate
+- Cost per request
+
+DATABASE:
+- Query latency
+- Connection pool utilization
+- Vector search performance
+- Index effectiveness
+
+
+8.4.2 ERROR TRACKING
+
+class IntegrationMetrics:
+    """Track integration health"""
+    
+    def __init__(self):
+        self.metrics = defaultdict(lambda: {
+            "total_requests": 0,
+            "successful_requests": 0,
+            "failed_requests": 0,
+            "total_latency": 0,
+            "cache_hits": 0
+        })
+    
+    def record_request(
+        self,
+        service: str,
+        success: bool,
+        latency_ms: float,
+        cache_hit: bool = False
+    ):
+        m = self.metrics[service]
+        m["total_requests"] += 1
+        
+        if success:
+            m["successful_requests"] += 1
+        else:
+            m["failed_requests"] += 1
+        
+        m["total_latency"] += latency_ms
+        
+        if cache_hit:
+            m["cache_hits"] += 1
+    
+    def get_stats(self, service: str) -> Dict:
+        m = self.metrics[service]
+        
+        return {
+            "success_rate": m["successful_requests"] / m["total_requests"],
+            "avg_latency": m["total_latency"] / m["total_requests"],
+            "cache_hit_rate": m["cache_hits"] / m["total_requests"]
+        }
+
+
+8.4.3 FALLBACK STRATEGIES
+
+YAHOO FINANCE FALLBACK:
+1. Use cached data (even if stale)
+2. Return historical average
+3. Return error with graceful message
+
+GEMINI API FALLBACK:
+1. Use simpler model (if available)
+2. Return template-based response
+3. Queue for retry
+
+DATABASE FALLBACK:
+1. Use read replica
+2. Return cached query results
+3. Degrade to keyword-only search
+
+
+--- DIAGRAM 8.1: EXTERNAL INTEGRATIONS ARCHITECTURE ---
+
+[MERMAID CODE - Copy this to Mermaid Live Editor]
+
+graph TB
+    subgraph FinMentor["FinMentor AI Application"]
+        API[FastAPI Backend]
+        
+        subgraph Agents["Multi-Agent System"]
+            QR[Query Router]
+            EA[Educational Agent]
+            MDA[Market Data Agent]
+            PBA[Portfolio Builder]
+        end
+        
+        subgraph Services["Service Layer"]
+            YF[Yahoo Finance Service]
+            GS[Gemini Service]
+            DB[Database Service]
+        end
+    end
+    
+    subgraph External["External Services"]
+        YAHOO[Yahoo Finance API<br/>Market Data]
+        GEMINI[Google Gemini API<br/>LLM + Embeddings]
+        PG[(PostgreSQL + PGVector<br/>Data Storage)]
+    end
+    
+    API --> QR
+    QR --> EA
+    QR --> MDA
+    QR --> PBA
+    
+    EA --> GS
+    EA --> DB
+    
+    MDA --> YF
+    MDA --> GS
+    MDA --> DB
+    
+    PBA --> YF
+    PBA --> GS
+    PBA --> DB
+    
+    YF -->|HTTPS| YAHOO
+    GS -->|HTTPS + API Key| GEMINI
+    DB -->|PostgreSQL Protocol| PG
+    
+    style YAHOO fill:#FF6B6B
+    style GEMINI fill:#4ECDC4
+    style PG fill:#95E1D3
+
+[END MERMAID CODE]
+
+
+--- DIAGRAM 8.2: API REQUEST FLOW WITH CACHING ---
+
+[MERMAID CODE - Copy this to Mermaid Live Editor]
+
+sequenceDiagram
+    participant Agent
+    participant Service
+    participant Cache
+    participant External as External API
+    
+    Agent->>Service: Request Data (symbol: AAPL)
+    
+    Service->>Cache: Check Cache
+    
+    alt Cache Hit (< 5 min old)
+        Cache-->>Service: Return Cached Data
+        Service-->>Agent: Data (1ms)
+    else Cache Miss or Stale
+        Service->>External: API Request
+        
+        alt Success
+            External-->>Service: Response Data
+            Service->>Cache: Store in Cache
+            Cache-->>Service: Stored
+            Service-->>Agent: Data (150ms)
+        else Rate Limited
+            External-->>Service: 429 Too Many Requests
+            Service->>Cache: Return Stale Data (if exists)
+            
+            alt Has Stale Data
+                Cache-->>Service: Stale Data
+                Service-->>Agent: Data (stale, flagged)
+            else No Cache
+                Service-->>Agent: Error + Retry Later
+            end
+        else Network Error
+            External-->>Service: Timeout/Error
+            Service->>Service: Retry (3 attempts)
+            
+            alt Retry Success
+                External-->>Service: Response Data
+                Service-->>Agent: Data
+            else All Retries Failed
+                Service->>Cache: Check for any cached data
+                alt Has Old Cache
+                    Cache-->>Service: Old Data
+                    Service-->>Agent: Data (old, flagged)
+                else No Cache
+                    Service-->>Agent: Error
+                end
+            end
+        end
+    end
+
+[END MERMAID CODE]
+
+
+================================================================================
+
+SUMMARY: SECTION 8 - EXTERNAL INTEGRATIONS
+================================================================================
+
+8.1 Yahoo Finance Integration
+- Real-time stock quotes and historical data
+- yfinance library implementation
+- Async data fetching with caching (5-minute TTL)
+- Multiple quote fetching (parallel)
+- Technical indicators: RSI, Moving Averages, Volatility
+- Error handling: Invalid symbols, rate limiting, timeouts
+- Retry logic with exponential backoff
+
+8.2 Google Gemini API Integration
+- Text generation (gemini-1.5-flash)
+- Embeddings (embedding-001, 1536 dimensions)
+- Rate limiting (10/min, 1500/day free tier)
+- DSPy framework integration
+- Token management and cost optimization
+- Batch embedding processing
+
+8.3 PostgreSQL + pgvector Integration
+- Vector similarity search setup
+- ivfflat index configuration
+- SQLAlchemy ORM integration
+- Distance operators (cosine, L2, inner product)
+- Hybrid search (vector + keyword)
+
+8.4 Integration Monitoring
+- Performance metrics tracking
+- Error tracking and logging
+- Fallback strategies for each service
+- Cache hit rate monitoring
+
+2 Mermaid Diagrams:
+- External integrations architecture
+- API request flow with caching and error handling
+
+================================================================================
+
+SECTION 8 - COMPLETE! ✅
+
+Remaining sections:
+- Section 9: Security & Privacy
+- Section 10: Technology Justification
+- Section 11: Future Enhancements
+
+Continue with Section 9?

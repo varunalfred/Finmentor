@@ -1,0 +1,1505 @@
+================================================================================
+                    SYSTEM DESIGN DOCUMENT - SECTION 4 (CONT.)
+                   ORCHESTRATOR & AGENTIC RAG SYSTEM
+================================================================================
+
+4.5 MULTI-AGENT ORCHESTRATOR
+--------------------------------------------------------------------------------
+
+PURPOSE: Coordinate multiple agents for complex queries requiring multiple 
+         perspectives
+
+RESPONSIBILITY: "The Project Manager"
+
+The Multi-Agent Orchestrator is the brain that decides WHICH agents to invoke,
+WHEN to invoke them, and HOW to combine their responses into a coherent answer.
+
+
+4.5.1 DESIGN OVERVIEW
+--------------------------------------------------------------------------------
+
+COORDINATION TASK: Complex Query → Multiple Agents → Synthesized Response
+
+The orchestrator handles queries that require expertise from multiple agents:
+- "Should I invest in Apple stock?" → Market Data + Portfolio Builder
+- "Explain P/E ratio and show me examples" → Educational + Market Data
+- "Compare HDFC vs ICICI for my portfolio" → Market Data (×2) + Portfolio Builder
+
+INPUT:
+- User query
+- Intent classification from Query Router
+- User profile (risk tolerance, experience level)
+- Conversation context
+
+OUTPUT:
+- Coordinated agent execution plan
+- Combined responses from multiple agents
+- Synthesized, coherent final answer
+- Metadata (which agents contributed, execution time)
+
+KEY RESPONSIBILITIES:
+
+1. COMPLEXITY ASSESSMENT
+   Determine if query needs 1 agent or multiple agents
+
+2. AGENT SELECTION
+   Choose which specialized agents to involve
+
+3. EXECUTION ORCHESTRATION
+   Run agents in parallel or sequence as needed
+
+4. RESULT SYNTHESIS
+   Combine multiple agent responses coherently
+
+5. CONFLICT RESOLUTION
+   Handle contradictory recommendations
+
+
+4.5.2 COMPLEXITY ASSESSMENT ALGORITHM
+--------------------------------------------------------------------------------
+
+The orchestrator first assesses query COMPLEXITY to determine approach.
+
+COMPLEXITY LEVELS:
+
+┌────────────────────────────────────────────────────────┐
+│  SIMPLE (Single-Agent)                                 │
+├────────────────────────────────────────────────────────┤
+│  • Clear, single intent                                │
+│  • One agent can fully answer                          │
+│  • No need for cross-referencing                       │
+│                                                        │
+│  Examples:                                             │
+│  ✓ "What is a mutual fund?"                            │
+│  ✓ "Show me Apple stock price"                         │
+│  ✓ "Build me a low-risk portfolio"                     │
+│                                                        │
+│  Action: Route to single agent                         │
+└────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────┐
+│  MODERATE (2-3 Agents, Sequential)                     │
+├────────────────────────────────────────────────────────┤
+│  • Multiple related intents                            │
+│  • Agents need each other's output                     │
+│  • Sequential dependency                               │
+│                                                        │
+│  Examples:                                             │
+│  ✓ "Explain diversification and build me a portfolio"  │
+│    → Educational first, then Portfolio Builder         │
+│  ✓ "What is Tesla's P/E ratio and is it good?"        │
+│    → Market Data first, then Educational (interpret)   │
+│                                                        │
+│  Action: Sequential execution with data passing        │
+└────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────┐
+│  COMPLEX (3+ Agents, Parallel)                         │
+├────────────────────────────────────────────────────────┤
+│  • Multiple independent intents                        │
+│  • Agents can work simultaneously                      │
+│  • Results need synthesis                              │
+│                                                        │
+│  Examples:                                             │
+│  ✓ "Should I invest in tech stocks?"                   │
+│    → Market Data (tech stocks) || Educational (risks)  │
+│      || Portfolio Builder (allocation)                 │
+│  ✓ "Compare Apple vs Microsoft"                        │
+│    → Market Data (AAPL) || Market Data (MSFT)          │
+│                                                        │
+│  Action: Parallel execution + synthesis                │
+└────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────┐
+│  CRITICAL (All Agents + Verification)                  │
+├────────────────────────────────────────────────────────┤
+│  • High-stakes financial decision                      │
+│  • Multiple perspectives needed                        │
+│  • Verification and self-reflection required           │
+│                                                        │
+│  Examples:                                             │
+│  ✓ "Should I invest my entire savings in crypto?"      │
+│  ✓ "I want to quit my job and day trade"              │
+│                                                        │
+│  Action: All agents + RAG verification + warnings      │
+└────────────────────────────────────────────────────────┘
+
+
+ASSESSMENT CRITERIA:
+
+def assess_complexity(user_query: str, intent: str, context: dict) -> str:
+    """Determine query complexity level"""
+    
+    complexity_score = 0
+    
+    # Factor 1: Number of intents detected
+    intents = detect_all_intents(user_query)
+    if len(intents) == 1:
+        complexity_score += 0
+    elif len(intents) == 2:
+        complexity_score += 2
+    elif len(intents) >= 3:
+        complexity_score += 4
+    
+    # Factor 2: Financial risk keywords
+    risk_keywords = ["invest all", "entire savings", "quit job", 
+                     "mortgage", "loan", "borrow"]
+    if any(keyword in user_query.lower() for keyword in risk_keywords):
+        complexity_score += 5  # High stakes!
+    
+    # Factor 3: Comparison requests
+    comparison_keywords = ["compare", "vs", "versus", "better", "which"]
+    if any(keyword in user_query.lower() for keyword in comparison_keywords):
+        complexity_score += 2
+    
+    # Factor 4: Multiple questions
+    question_marks = user_query.count("?")
+    if question_marks > 1:
+        complexity_score += 2
+    
+    # Factor 5: User experience level
+    if context.get("user_level") == "beginner":
+        complexity_score += 1  # Beginners need more guidance
+    
+    # Classify based on score
+    if complexity_score == 0:
+        return "SIMPLE"
+    elif complexity_score <= 3:
+        return "MODERATE"
+    elif complexity_score <= 7:
+        return "COMPLEX"
+    else:
+        return "CRITICAL"
+
+
+EXAMPLE ASSESSMENTS:
+
+Query: "What is a stock?"
+  - Single intent: educational ✓
+  - No risk keywords
+  - No comparison
+  - 1 question mark
+  - Score: 0 → SIMPLE
+
+Query: "Explain P/E ratio and show me examples for Apple and Microsoft"
+  - Multiple intents: educational + market_data (×2) → +4
+  - Comparison: "Apple and Microsoft" → +2
+  - Score: 6 → COMPLEX
+
+Query: "Should I invest my entire life savings in Tesla stock?"
+  - Multiple intents: market_data + portfolio advice → +2
+  - High risk: "entire life savings" → +5
+  - Score: 7 → CRITICAL ⚠️
+
+
+4.5.3 AGENT SELECTION STRATEGY
+--------------------------------------------------------------------------------
+
+Based on complexity and intent, select appropriate agents.
+
+SELECTION RULES:
+
+┌─────────────────────────────────────────────────────────────┐
+│  RULE 1: Educational Intent → Educational Agent             │
+│  Triggered by: "what is", "explain", "how does"             │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│  RULE 2: Market Data Intent → Market Data Agent             │
+│  Triggered by: stock symbols, "price", "fundamentals"       │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│  RULE 3: Portfolio Intent → Portfolio Builder Agent         │
+│  Triggered by: "invest", "portfolio", "recommend"           │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│  RULE 4: Investment Advice → Market Data + Portfolio Builder│
+│  Triggered by: "should I invest in [stock]"                 │
+│  Reasoning: Need both data AND recommendation               │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│  RULE 5: Comparison → Market Data (×N) + Educational        │
+│  Triggered by: "compare X vs Y"                             │
+│  Reasoning: Fetch data for each, explain differences        │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│  RULE 6: High Risk → All Agents + RAG Verification          │
+│  Triggered by: complexity == CRITICAL                       │
+│  Reasoning: Multiple perspectives + past learnings          │
+└─────────────────────────────────────────────────────────────┘
+
+
+IMPLEMENTATION:
+
+def select_agents(complexity: str, intents: list[str], user_query: str) -> list[str]:
+    """Select which agents to execute"""
+    
+    selected_agents = []
+    
+    if complexity == "SIMPLE":
+        # Single agent based on primary intent
+        if "educational" in intents:
+            selected_agents.append("educational_agent")
+        elif "market_data" in intents:
+            selected_agents.append("market_data_agent")
+        elif "portfolio" in intents:
+            selected_agents.append("portfolio_builder")
+    
+    elif complexity == "MODERATE":
+        # 2-3 agents, sequential
+        if "educational" in intents and "market_data" in intents:
+            selected_agents.extend(["market_data_agent", "educational_agent"])
+        elif "market_data" in intents and "portfolio" in intents:
+            selected_agents.extend(["market_data_agent", "portfolio_builder"])
+    
+    elif complexity == "COMPLEX":
+        # Multiple agents, parallel
+        if "educational" in intents:
+            selected_agents.append("educational_agent")
+        if "market_data" in intents:
+            selected_agents.append("market_data_agent")
+        if "portfolio" in intents:
+            selected_agents.append("portfolio_builder")
+        
+        # Check for comparison (need multiple market data calls)
+        if "compare" in user_query.lower():
+            # Extract stock symbols and create multiple market data tasks
+            symbols = extract_stock_symbols(user_query)
+            for symbol in symbols:
+                selected_agents.append(f"market_data_agent:{symbol}")
+    
+    elif complexity == "CRITICAL":
+        # All agents + verification
+        selected_agents = [
+            "educational_agent",  # Explain risks
+            "market_data_agent",  # Current data
+            "portfolio_builder",  # Recommendations
+            "rag_verification"    # Check past similar queries
+        ]
+    
+    return selected_agents
+
+
+4.5.4 EXECUTION ORCHESTRATION
+--------------------------------------------------------------------------------
+
+Once agents are selected, orchestrator executes them efficiently.
+
+TWO EXECUTION MODES:
+
+┌────────────────────────────────────────────────────────────┐
+│  MODE 1: SEQUENTIAL EXECUTION                              │
+│  When: Agents depend on each other's output                │
+├────────────────────────────────────────────────────────────┤
+│                                                            │
+│  ┌──────────────┐                                          │
+│  │   Agent 1    │                                          │
+│  │ (Market Data)│                                          │
+│  └──────┬───────┘                                          │
+│         │ output                                           │
+│         ▼                                                  │
+│  ┌──────────────┐                                          │
+│  │   Agent 2    │                                          │
+│  │(Educational) │ ← Uses Agent 1's data                    │
+│  └──────┬───────┘                                          │
+│         │ output                                           │
+│         ▼                                                  │
+│  ┌──────────────┐                                          │
+│  │   Synthesis  │                                          │
+│  └──────────────┘                                          │
+│                                                            │
+│  Total Time: T1 + T2 + T3 (additive)                       │
+└────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────┐
+│  MODE 2: PARALLEL EXECUTION                                │
+│  When: Agents are independent                              │
+├────────────────────────────────────────────────────────────┤
+│                                                            │
+│         ┌──────────────┐                                   │
+│         │   Agent 1    │                                   │
+│         │(Educational) │                                   │
+│         └──────┬───────┘                                   │
+│                │                                           │
+│         ┌──────────────┐                                   │
+│  Start→ │   Agent 2    │ → All run at same time           │
+│         │ (Market Data)│                                   │
+│         └──────┬───────┘                                   │
+│                │                                           │
+│         ┌──────────────┐                                   │
+│         │   Agent 3    │                                   │
+│         │  (Portfolio) │                                   │
+│         └──────┬───────┘                                   │
+│                │                                           │
+│         ┌──────▼───────┐                                   │
+│         │  Wait All    │                                   │
+│         │  (gather)    │                                   │
+│         └──────┬───────┘                                   │
+│                ▼                                           │
+│         ┌──────────────┐                                   │
+│         │  Synthesis   │                                   │
+│         └──────────────┘                                   │
+│                                                            │
+│  Total Time: max(T1, T2, T3) (parallel)                    │
+│  Speedup: ~3x faster! 🚀                                   │
+└────────────────────────────────────────────────────────────┘
+
+
+PYTHON IMPLEMENTATION:
+
+class MultiAgentOrchestrator:
+    def __init__(self, hybrid_system, rag_service):
+        self.hybrid_system = hybrid_system
+        self.rag_service = rag_service
+    
+    async def execute_agents(
+        self, 
+        agents: list[str], 
+        user_query: str, 
+        context: dict,
+        mode: str = "parallel"
+    ) -> dict:
+        """Execute multiple agents and combine results"""
+        
+        if mode == "parallel":
+            return await self._execute_parallel(agents, user_query, context)
+        else:
+            return await self._execute_sequential(agents, user_query, context)
+    
+    async def _execute_parallel(self, agents, user_query, context):
+        """Run agents in parallel using asyncio.gather()"""
+        
+        tasks = []
+        for agent_name in agents:
+            # Create async task for each agent
+            task = self._run_single_agent(agent_name, user_query, context)
+            tasks.append(task)
+        
+        # Execute all tasks in parallel
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Handle any errors
+        processed_results = []
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.error(f"Agent {agents[i]} failed: {result}")
+                processed_results.append({
+                    "agent": agents[i],
+                    "error": str(result),
+                    "success": False
+                })
+            else:
+                processed_results.append({
+                    "agent": agents[i],
+                    "result": result,
+                    "success": True
+                })
+        
+        return processed_results
+    
+    async def _execute_sequential(self, agents, user_query, context):
+        """Run agents in sequence, passing output to next"""
+        
+        results = []
+        accumulated_context = context.copy()
+        
+        for agent_name in agents:
+            # Run agent with accumulated context
+            result = await self._run_single_agent(
+                agent_name, 
+                user_query, 
+                accumulated_context
+            )
+            
+            results.append({
+                "agent": agent_name,
+                "result": result,
+                "success": True
+            })
+            
+            # Add this agent's output to context for next agent
+            accumulated_context[f"{agent_name}_output"] = result
+        
+        return results
+    
+    async def _run_single_agent(self, agent_name, user_query, context):
+        """Execute a single agent"""
+        
+        if agent_name == "educational_agent":
+            return await self.hybrid_system.educational_agent(user_query, context)
+        elif agent_name == "market_data_agent":
+            return await self.hybrid_system.market_data_agent(user_query, context)
+        elif agent_name == "portfolio_builder":
+            return await self.hybrid_system.portfolio_builder(user_query, context)
+        elif agent_name.startswith("market_data_agent:"):
+            # Special case: market data for specific symbol
+            symbol = agent_name.split(":")[1]
+            return await self.hybrid_system.market_data_agent(symbol, context)
+        else:
+            raise ValueError(f"Unknown agent: {agent_name}")
+
+
+PERFORMANCE EXAMPLE:
+
+Query: "Should I invest in tech stocks?"
+
+Sequential Execution:
+  Market Data Agent: 2.5s
+  Educational Agent: 2.0s
+  Portfolio Builder: 3.0s
+  Total: 7.5 seconds ❌
+
+Parallel Execution:
+  Market Data Agent: 2.5s  ┐
+  Educational Agent: 2.0s  ├─ All run simultaneously
+  Portfolio Builder: 3.0s  ┘
+  Total: 3.0 seconds (max) ✅
+  
+  Speedup: 2.5x faster!
+
+
+4.5.5 RESULT SYNTHESIS
+--------------------------------------------------------------------------------
+
+After agents complete, orchestrator SYNTHESIZES responses into coherent answer.
+
+SYNTHESIS CHALLENGES:
+
+1. DIFFERENT FORMATS
+   - Educational: Long explanations
+   - Market Data: Numbers and charts
+   - Portfolio: Stock lists and allocations
+   
+   Solution: Use structured templates
+
+2. POTENTIALLY CONTRADICTORY
+   - Market Data says "Stock is expensive (P/E = 45)"
+   - Portfolio Builder says "Include in growth portfolio"
+   
+   Solution: Acknowledge both perspectives
+
+3. INFORMATION OVERLOAD
+   - 3 agents × 500 words each = 1500 words
+   - Too much for user!
+   
+   Solution: Summarize key points
+
+4. COHERENT NARRATIVE
+   - Responses should flow naturally
+   - Not just concatenated outputs
+   
+   Solution: LLM-based synthesis
+
+
+SYNTHESIS ALGORITHM:
+
+async def synthesize_results(
+    self, 
+    agent_results: list[dict], 
+    user_query: str,
+    user_level: str
+) -> str:
+    """Combine multiple agent responses into coherent answer"""
+    
+    # Step 1: Extract key information from each agent
+    key_points = []
+    for result in agent_results:
+        if not result["success"]:
+            continue
+        
+        agent_name = result["agent"]
+        output = result["result"]
+        
+        # Extract most important info
+        if agent_name == "educational_agent":
+            key_points.append({
+                "type": "education",
+                "content": output.get("explanation", ""),
+                "examples": output.get("examples", [])
+            })
+        elif agent_name == "market_data_agent":
+            key_points.append({
+                "type": "data",
+                "symbol": output.get("symbol", ""),
+                "price": output.get("price", 0),
+                "interpretation": output.get("interpretation", "")
+            })
+        elif agent_name == "portfolio_builder":
+            key_points.append({
+                "type": "recommendation",
+                "stocks": output.get("stocks", []),
+                "rationale": output.get("strategy_explanation", "")
+            })
+    
+    # Step 2: Build synthesis prompt for LLM
+    synthesis_prompt = f"""
+    You are a financial advisor synthesizing insights from multiple experts.
+    
+    User Question: {user_query}
+    User Level: {user_level}
+    
+    Expert Insights:
+    {json.dumps(key_points, indent=2)}
+    
+    Create a coherent, well-structured response that:
+    1. Directly answers the user's question
+    2. Combines insights from all experts
+    3. Presents information in logical order
+    4. Uses language appropriate for {user_level} level
+    5. Acknowledges any contradictions or trade-offs
+    6. Ends with clear action items or recommendations
+    
+    Format the response with clear sections and bullet points where appropriate.
+    """
+    
+    # Step 3: Use LLM to generate synthesis
+    synthesized_response = await self.llm.generate(synthesis_prompt)
+    
+    # Step 4: Add metadata (which agents contributed)
+    agent_names = [r["agent"] for r in agent_results if r["success"]]
+    metadata = {
+        "agents_consulted": agent_names,
+        "synthesis_method": "llm_based",
+        "confidence": calculate_confidence(agent_results)
+    }
+    
+    return {
+        "response": synthesized_response,
+        "metadata": metadata,
+        "raw_agent_outputs": agent_results  # For debugging
+    }
+
+
+EXAMPLE SYNTHESIS:
+
+User Query: "Should I invest in Apple stock?"
+User Level: Beginner
+
+Agent Outputs:
+1. Market Data Agent:
+   - Price: $150.25
+   - P/E: 28.5 (above market average)
+   - RSI: 62 (neutral)
+   - Interpretation: "Fairly valued, moderate momentum"
+
+2. Educational Agent:
+   - Explains P/E ratio
+   - Explains diversification
+   - Explains risk of single-stock investment
+
+3. Portfolio Builder:
+   - Recommends: Don't invest 100% in one stock
+   - Suggests: 10-15% allocation max
+   - Alternative: Tech sector ETF for diversification
+
+Synthesized Response:
+"""
+# Should You Invest in Apple Stock?
+
+## Current Market Analysis
+Apple (AAPL) is currently trading at $150.25. The stock has a P/E ratio 
+of 28.5, which is above the market average of 20-22. This suggests the 
+market has high expectations for Apple's future growth. Technical indicators 
+show neutral momentum (RSI: 62), meaning the stock is neither overbought 
+nor oversold.
+
+## Key Considerations for Beginners
+
+**Understanding Valuation (P/E Ratio):**
+The P/E ratio tells you how much you're paying for each dollar of earnings.
+Apple's P/E of 28.5 means you pay $28.50 for every $1 of annual profit.
+This is relatively high, reflecting Apple's strong brand and growth potential.
+
+**The Importance of Diversification:**
+As a beginner, putting all your money into a single stock (even a great 
+company like Apple) is risky. If Apple faces problems, your entire 
+investment suffers.
+
+## Recommendation
+
+✅ **Yes, Apple can be part of your portfolio, BUT:**
+- Limit to 10-15% of your total investment (not 100%)
+- Consider including other sectors (banking, healthcare, etc.)
+- Start with a diversified portfolio that includes 8-10 different stocks
+
+💡 **Alternative Option:**
+If you believe in tech stocks but want more safety, consider a tech sector 
+ETF (exchange-traded fund) that holds Apple along with Microsoft, Google, 
+and others.
+
+## Next Steps
+1. Decide your total investment amount
+2. Determine your risk tolerance (conservative/moderate/aggressive)
+3. Build a diversified portfolio (I can help with this!)
+4. Start with smaller amounts until you're comfortable
+
+Remember: This is educational guidance, not financial advice. Always do 
+your own research or consult a certified financial advisor.
+"""
+
+Agents Consulted: [Market Data, Educational, Portfolio Builder]
+Confidence: High (all agents agreed on diversification approach)
+
+
+4.5.6 CONFLICT RESOLUTION
+--------------------------------------------------------------------------------
+
+Sometimes agents provide contradictory advice. Orchestrator must handle this.
+
+CONFLICT SCENARIOS:
+
+Scenario 1: VALUATION DISAGREEMENT
+  Market Data: "Stock is overvalued (P/E = 50)"
+  Portfolio Builder: "Include in high-growth portfolio"
+  
+  Resolution:
+    Present both views:
+    "While the stock appears expensive based on traditional valuation 
+     (P/E ratio), it may fit in a high-growth portfolio if you're 
+     comfortable with higher risk. This is a classic growth vs value 
+     trade-off."
+
+Scenario 2: RISK ASSESSMENT DISAGREEMENT
+  Educational Agent: "High-risk investment"
+  Portfolio Builder: "Suitable for moderate risk"
+  
+  Resolution:
+    Explain the nuance:
+    "Risk depends on context. For a single stock, this is high-risk. 
+     But as 10% of a diversified portfolio, it represents moderate risk."
+
+Scenario 3: TIMING DISAGREEMENT
+  Market Data: "RSI = 75 (overbought), wait for correction"
+  Portfolio Builder: "Good long-term hold regardless of timing"
+  
+  Resolution:
+    Distinguish time horizons:
+    "For short-term traders, waiting for a dip makes sense. For long-term 
+     investors (5+ years), timing matters less. Choose based on your 
+     investment horizon."
+
+
+CONFLICT RESOLUTION ALGORITHM:
+
+def resolve_conflicts(agent_results: list[dict]) -> dict:
+    """Identify and resolve contradictions in agent outputs"""
+    
+    conflicts = []
+    
+    # Check for opposing recommendations
+    recommendations = [r["result"].get("recommendation") for r in agent_results 
+                      if "recommendation" in r["result"]]
+    
+    if "buy" in recommendations and "sell" in recommendations:
+        conflicts.append({
+            "type": "recommendation_conflict",
+            "agents": identify_conflicting_agents(agent_results, "recommendation"),
+            "resolution": "Present both perspectives with context"
+        })
+    
+    # Check for risk level disagreement
+    risk_levels = [r["result"].get("risk_level") for r in agent_results 
+                  if "risk_level" in r["result"]]
+    
+    if len(set(risk_levels)) > 1:  # Different risk assessments
+        conflicts.append({
+            "type": "risk_assessment_conflict",
+            "agents": identify_conflicting_agents(agent_results, "risk_level"),
+            "resolution": "Explain context-dependent risk"
+        })
+    
+    return {
+        "has_conflicts": len(conflicts) > 0,
+        "conflicts": conflicts,
+        "resolution_strategy": "acknowledge_and_explain"
+    }
+
+
+--- DIAGRAM 4.5: MULTI-AGENT ORCHESTRATOR FLOW ---
+
+[MERMAID CODE - Copy this to Mermaid Live Editor]
+
+graph TD
+    START[Complex User Query] --> ASSESS[Assess Complexity]
+    
+    ASSESS --> SIMPLE{Complexity Level}
+    
+    SIMPLE -->|Simple| SINGLE[Single Agent Execution]
+    SIMPLE -->|Moderate| SEQ[Sequential Execution]
+    SIMPLE -->|Complex| PAR[Parallel Execution]
+    SIMPLE -->|Critical| ALL[All Agents + Verification]
+    
+    SINGLE --> RESULT1[Direct Response]
+    
+    SEQ --> AGENT1[Agent 1]
+    AGENT1 --> PASS[Pass Output]
+    PASS --> AGENT2[Agent 2]
+    AGENT2 --> RESULT2[Combined Response]
+    
+    PAR --> GATHER[asyncio.gather]
+    GATHER --> AGENTA[Agent A]
+    GATHER --> AGENTB[Agent B]
+    GATHER --> AGENTC[Agent C]
+    
+    AGENTA --> WAIT[Wait for All]
+    AGENTB --> WAIT
+    AGENTC --> WAIT
+    
+    ALL --> VERIFY[+ RAG Verification]
+    
+    WAIT --> SYNTH[Synthesize Results]
+    VERIFY --> SYNTH
+    
+    SYNTH --> CONFLICT{Conflicts?}
+    
+    CONFLICT -->|Yes| RESOLVE[Resolve Conflicts]
+    CONFLICT -->|No| FORMAT[Format Response]
+    
+    RESOLVE --> FORMAT
+    RESULT1 --> FORMAT
+    RESULT2 --> FORMAT
+    
+    FORMAT --> FINAL[Final Response to User]
+    
+    style ASSESS fill:#FF6B6B
+    style GATHER fill:#4ECDC4
+    style SYNTH fill:#F7DC6F
+    style CONFLICT fill:#E74C3C
+    style FINAL fill:#2ECC71
+
+[END MERMAID CODE]
+
+
+================================================================================
+
+4.6 AGENTIC RAG SYSTEM
+--------------------------------------------------------------------------------
+
+PURPOSE: Intelligent retrieval of relevant context to enhance agent responses
+
+RESPONSIBILITY: "The Knowledge Librarian"
+
+The Agentic RAG (Retrieval-Augmented Generation) system doesn't just retrieve
+documents blindly. It UNDERSTANDS the query, PLANS what to retrieve, and
+VERIFIES the relevance before passing to agents.
+
+
+4.6.1 DESIGN OVERVIEW
+--------------------------------------------------------------------------------
+
+INTELLIGENT RETRIEVAL TASK: Query → Plan → Retrieve → Verify → Context
+
+Traditional RAG:
+  User Query → Embed → Search Vectors → Return Top 5 → Pass to LLM
+  ❌ Problem: No understanding of WHAT to retrieve or WHY
+
+Agentic RAG:
+  User Query → Classify Intent → Plan Retrieval → Execute Search → 
+  Verify Relevance → Self-Reflect → Return Best Context
+  ✅ Intelligent: Adapts strategy based on query type
+
+KEY COMPONENTS:
+
+1. INTENT CLASSIFIER
+   Understands WHAT user is asking for
+
+2. RETRIEVAL PLANNER
+   Decides WHERE to search and HOW
+
+3. MULTI-SOURCE RETRIEVER
+   Fetches from conversations, education content, web
+
+4. RELEVANCE VERIFIER
+   Filters out irrelevant results
+
+5. SELF-REFLECTION
+   Double-checks critical financial advice
+
+
+4.6.2 INTENT CLASSIFICATION FOR RAG
+--------------------------------------------------------------------------------
+
+The RAG system classifies queries into 6 INTENT TYPES to plan retrieval:
+
+┌────────────────────────────────────────────────────────┐
+│  INTENT 1: FACTUAL_QUESTION                            │
+│  User wants objective information                      │
+├────────────────────────────────────────────────────────┤
+│  Examples:                                             │
+│  • "What is the current price of Apple stock?"         │
+│  • "When does the stock market open?"                  │
+│  • "What is SEBI?"                                     │
+│                                                        │
+│  Retrieval Strategy:                                   │
+│  → Search educational content for definitions          │
+│  → Fetch real-time data from APIs                      │
+│  → Low need for conversation history                   │
+└────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────┐
+│  INTENT 2: CONCEPT_EXPLANATION                         │
+│  User wants to learn/understand                        │
+├────────────────────────────────────────────────────────┤
+│  Examples:                                             │
+│  • "Explain diversification"                           │
+│  • "How does compound interest work?"                  │
+│  • "What's the difference between stocks and bonds?"   │
+│                                                        │
+│  Retrieval Strategy:                                   │
+│  → Heavy use of educational_content table              │
+│  → Vector search for similar concepts                  │
+│  → Include examples from past explanations             │
+└────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────┐
+│  INTENT 3: PERSONALIZED_ADVICE                         │
+│  User wants recommendation for their situation         │
+├────────────────────────────────────────────────────────┤
+│  Examples:                                             │
+│  • "What should I invest in?"                          │
+│  • "Is this stock good for me?"                        │
+│  • "Build me a portfolio"                              │
+│                                                        │
+│  Retrieval Strategy:                                   │
+│  → Fetch user's past portfolios                        │
+│  → Retrieve conversation history for context           │
+│  → Get user profile (risk tolerance, goals)            │
+│  → Check similar users' portfolios (future)            │
+└────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────┐
+│  INTENT 4: FOLLOW_UP_QUESTION                          │
+│  User refers to previous conversation                  │
+├────────────────────────────────────────────────────────┤
+│  Examples:                                             │
+│  • "What about its dividend?"                          │
+│  • "Tell me more about that"                           │
+│  • "What were the stocks you mentioned?"               │
+│                                                        │
+│  Retrieval Strategy:                                   │
+│  → MUST retrieve recent conversation history           │
+│  → Extract context (what "that" or "it" refers to)     │
+│  → High priority on conversation continuity            │
+└────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────┐
+│  INTENT 5: COMPARISON_REQUEST                          │
+│  User wants to compare options                         │
+├────────────────────────────────────────────────────────┤
+│  Examples:                                             │
+│  • "Compare Apple vs Microsoft"                        │
+│  • "SBI vs HDFC Bank which is better?"                 │
+│  • "Mutual funds vs stocks"                            │
+│                                                        │
+│  Retrieval Strategy:                                   │
+│  → Fetch data for EACH item being compared             │
+│  → Retrieve educational content on differences         │
+│  → Get comparison framework/criteria                   │
+└────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────┐
+│  INTENT 6: CRITICAL_DECISION                           │
+│  User making high-stakes financial decision            │
+├────────────────────────────────────────────────────────┤
+│  Examples:                                             │
+│  • "Should I invest my retirement savings in crypto?"  │
+│  • "I want to take a loan to invest in stocks"        │
+│  • "Should I quit my job to day trade?"                │
+│                                                        │
+│  Retrieval Strategy:                                   │
+│  → Retrieve ALL relevant warnings and risk info        │
+│  → Check for past similar queries and outcomes         │
+│  → Fetch regulatory guidelines (SEBI warnings)         │
+│  → SELF-REFLECTION: Verify we're not giving bad advice │
+└────────────────────────────────────────────────────────┘
+
+
+CLASSIFICATION IMPLEMENTATION:
+
+class AgenticRAG:
+    def __init__(self, db_session, llm):
+        self.db = db_session
+        self.llm = llm
+        self.intent_classifier = dspy.Predict(IntentClassificationSignature)
+    
+    async def classify_intent(self, user_query: str, context: dict) -> str:
+        """Classify query intent for retrieval planning"""
+        
+        result = self.intent_classifier(
+            user_query=user_query,
+            conversation_history=context.get("recent_messages", "")
+        )
+        
+        return result.intent  # One of 6 intent types
+
+
+4.6.3 RETRIEVAL PLANNING
+--------------------------------------------------------------------------------
+
+Based on intent, RAG plans WHAT to retrieve and FROM WHERE.
+
+RETRIEVAL SOURCES:
+
+┌────────────────────────────────────────────────────────┐
+│  SOURCE 1: Conversation History (messages table)       │
+├────────────────────────────────────────────────────────┤
+│  Contains: Past user queries and AI responses          │
+│  Vector Field: embedding (1536-dim)                    │
+│  Use When: Follow-up questions, personalized advice    │
+│  Search Method: Vector similarity (cosine distance)    │
+└────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────┐
+│  SOURCE 2: Educational Content (educational_content)   │
+├────────────────────────────────────────────────────────┤
+│  Contains: 538+ financial terms and concepts           │
+│  Vector Field: embedding (1536-dim)                    │
+│  Use When: Concept explanations, learning              │
+│  Search Method: Vector similarity + keyword filter     │
+└────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────┐
+│  SOURCE 3: User Portfolios (portfolios table)          │
+├────────────────────────────────────────────────────────┤
+│  Contains: Past generated portfolios for user          │
+│  Vector Field: None (direct SQL filter)                │
+│  Use When: Personalized advice, portfolio analysis     │
+│  Search Method: Filter by user_id, order by created_at │
+└────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────┐
+│  SOURCE 4: External Web (DuckDuckGo)                   │
+├────────────────────────────────────────────────────────┤
+│  Contains: Latest financial news and articles          │
+│  Vector Field: N/A                                     │
+│  Use When: Breaking news, recent events                │
+│  Search Method: Keyword search API                     │
+└────────────────────────────────────────────────────────┘
+
+
+PLANNING ALGORITHM:
+
+async def plan_retrieval(self, intent: str, user_query: str, user_id: str) -> dict:
+    """Plan what to retrieve based on intent"""
+    
+    retrieval_plan = {
+        "sources": [],
+        "filters": {},
+        "limit": 5,
+        "rerank": False
+    }
+    
+    if intent == "FACTUAL_QUESTION":
+        retrieval_plan["sources"] = ["educational_content", "web"]
+        retrieval_plan["limit"] = 3
+        retrieval_plan["rerank"] = False
+    
+    elif intent == "CONCEPT_EXPLANATION":
+        retrieval_plan["sources"] = ["educational_content", "conversations"]
+        retrieval_plan["filters"]["role"] = "assistant"  # Only AI explanations
+        retrieval_plan["limit"] = 5
+        retrieval_plan["rerank"] = True  # Re-rank by relevance
+    
+    elif intent == "PERSONALIZED_ADVICE":
+        retrieval_plan["sources"] = ["conversations", "portfolios"]
+        retrieval_plan["filters"]["user_id"] = user_id  # User-specific
+        retrieval_plan["limit"] = 5
+        retrieval_plan["rerank"] = True
+    
+    elif intent == "FOLLOW_UP_QUESTION":
+        retrieval_plan["sources"] = ["conversations"]
+        retrieval_plan["filters"]["user_id"] = user_id
+        retrieval_plan["filters"]["time_range"] = "last_24_hours"  # Recent only
+        retrieval_plan["limit"] = 10  # More context for follow-ups
+        retrieval_plan["rerank"] = False
+    
+    elif intent == "COMPARISON_REQUEST":
+        retrieval_plan["sources"] = ["educational_content", "conversations", "web"]
+        retrieval_plan["limit"] = 10  # Need more for comparisons
+        retrieval_plan["rerank"] = True
+    
+    elif intent == "CRITICAL_DECISION":
+        retrieval_plan["sources"] = ["educational_content", "conversations", "web"]
+        retrieval_plan["filters"]["priority"] = "risk_warnings"
+        retrieval_plan["limit"] = 15  # Get lots of context
+        retrieval_plan["rerank"] = True
+        retrieval_plan["self_reflect"] = True  # Extra verification step
+    
+    return retrieval_plan
+
+
+4.6.4 VECTOR SIMILARITY SEARCH
+--------------------------------------------------------------------------------
+
+Core RAG operation: Finding semantically similar content.
+
+SEARCH PROCESS:
+
+┌──────────────────────────────────────────────────────────┐
+│  STEP 1: Generate Query Embedding                        │
+│  Convert user query to 1536-dimensional vector           │
+└──────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────┐
+│  STEP 2: Execute Vector Search                           │
+│  Use PGVector <-> operator for cosine similarity         │
+└──────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────┐
+│  STEP 3: Apply Filters                                   │
+│  Filter by user_id, time_range, role, etc.               │
+└──────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────┐
+│  STEP 4: Rank by Similarity                              │
+│  Order by cosine distance (lower = more similar)         │
+└──────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────┐
+│  STEP 5: Return Top K Results                            │
+│  Default K=5, adjust based on intent                     │
+└──────────────────────────────────────────────────────────┘
+
+
+SQL IMPLEMENTATION:
+
+async def retrieve_from_conversations(
+    self,
+    query_embedding: list[float],
+    user_id: str,
+    limit: int = 5,
+    time_range: str = None
+) -> list[dict]:
+    """Retrieve similar past conversations using vector search"""
+    
+    # Build SQL query with vector similarity
+    query = """
+    SELECT 
+        content,
+        role,
+        created_at,
+        response_data,
+        embedding <-> :query_embedding as similarity_score
+    FROM messages
+    WHERE 
+        user_id = :user_id
+        AND role = 'assistant'  -- Only retrieve AI responses
+        {time_filter}
+    ORDER BY similarity_score ASC  -- Lower = more similar
+    LIMIT :limit
+    """
+    
+    # Add time filter if specified
+    time_filter = ""
+    if time_range == "last_24_hours":
+        time_filter = "AND created_at > NOW() - INTERVAL '24 hours'"
+    elif time_range == "last_week":
+        time_filter = "AND created_at > NOW() - INTERVAL '7 days'"
+    
+    query = query.format(time_filter=time_filter)
+    
+    # Execute query
+    result = await self.db.execute(
+        query,
+        {
+            "query_embedding": query_embedding,
+            "user_id": user_id,
+            "limit": limit
+        }
+    )
+    
+    return [dict(row) for row in result.fetchall()]
+
+
+async def retrieve_from_education(
+    self,
+    query_embedding: list[float],
+    topic: str = None,
+    level: str = None,
+    limit: int = 5
+) -> list[dict]:
+    """Retrieve similar educational content"""
+    
+    query = """
+    SELECT 
+        title,
+        topic,
+        level,
+        content,
+        summary,
+        embedding <-> :query_embedding as similarity_score
+    FROM educational_content
+    WHERE 1=1
+        {topic_filter}
+        {level_filter}
+    ORDER BY similarity_score ASC
+    LIMIT :limit
+    """
+    
+    topic_filter = "AND topic = :topic" if topic else ""
+    level_filter = "AND level = :level" if level else ""
+    
+    query = query.format(topic_filter=topic_filter, level_filter=level_filter)
+    
+    result = await self.db.execute(
+        query,
+        {
+            "query_embedding": query_embedding,
+            "topic": topic,
+            "level": level,
+            "limit": limit
+        }
+    )
+    
+    return [dict(row) for row in result.fetchall()]
+
+
+SIMILARITY SCORE INTERPRETATION:
+
+┌───────────────────────────────────────────────────┐
+│  Similarity Score (Cosine Distance)               │
+├───────────────────────────────────────────────────┤
+│  0.00 - 0.10 : Highly similar (almost identical)  │
+│  0.10 - 0.30 : Very similar (strong match)        │
+│  0.30 - 0.50 : Moderately similar (related)       │
+│  0.50 - 0.70 : Somewhat similar (loosely related) │
+│  0.70 - 1.00 : Not similar (different topics)     │
+│  1.00 - 2.00 : Opposite/Unrelated                 │
+└───────────────────────────────────────────────────┘
+
+
+4.6.5 RELEVANCE VERIFICATION
+--------------------------------------------------------------------------------
+
+Not all retrieved content is useful. Verify before passing to agents.
+
+VERIFICATION CRITERIA:
+
+1. SIMILARITY THRESHOLD
+   Discard results with similarity > 0.6 (too different)
+
+2. RECENCY CHECK (for time-sensitive queries)
+   For market data queries, prefer recent conversations
+
+3. COMPLETENESS CHECK
+   Ensure retrieved content actually answers the question
+
+4. CONTRADICTION CHECK
+   Flag if retrieved content contradicts itself
+
+
+IMPLEMENTATION:
+
+async def verify_relevance(
+    self,
+    retrieved_docs: list[dict],
+    user_query: str,
+    threshold: float = 0.6
+) -> list[dict]:
+    """Filter out irrelevant retrieved documents"""
+    
+    verified_docs = []
+    
+    for doc in retrieved_docs:
+        # Check 1: Similarity threshold
+        if doc["similarity_score"] > threshold:
+            continue  # Too dissimilar, skip
+        
+        # Check 2: Content completeness (not empty)
+        if not doc.get("content") or len(doc["content"]) < 50:
+            continue  # Too short to be useful
+        
+        # Check 3: LLM-based relevance (for critical queries)
+        if self._is_critical_query(user_query):
+            is_relevant = await self._llm_verify_relevance(doc, user_query)
+            if not is_relevant:
+                continue
+        
+        verified_docs.append(doc)
+    
+    return verified_docs
+
+
+async def _llm_verify_relevance(self, doc: dict, user_query: str) -> bool:
+    """Use LLM to verify if document is relevant to query"""
+    
+    prompt = f"""
+    User Question: {user_query}
+    
+    Retrieved Document: {doc['content'][:500]}
+    
+    Is this document relevant to answering the user's question?
+    Respond with only "yes" or "no".
+    """
+    
+    response = await self.llm.generate(prompt)
+    return "yes" in response.lower()
+
+
+4.6.6 SELF-REFLECTION FOR CRITICAL QUERIES
+--------------------------------------------------------------------------------
+
+For high-stakes financial decisions, RAG performs SELF-REFLECTION.
+
+SELF-REFLECTION PROCESS:
+
+┌──────────────────────────────────────────────────────────┐
+│  STEP 1: Detect Critical Query                           │
+│  Check for risk keywords: "all savings", "quit job", etc. │
+└──────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────┐
+│  STEP 2: Retrieve Past Similar Queries                   │
+│  Has anyone asked similar risky question before?          │
+└──────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────┐
+│  STEP 3: Check for Contradictions                        │
+│  Do different sources give conflicting advice?            │
+└──────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────┐
+│  STEP 4: Generate Cautionary Response                    │
+│  Emphasize risks, add disclaimers                         │
+└──────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────┐
+│  STEP 5: Flag for Human Review (Future)                  │
+│  Log critical queries for audit                           │
+└──────────────────────────────────────────────────────────┘
+
+
+IMPLEMENTATION:
+
+async def self_reflect(
+    self,
+    user_query: str,
+    retrieved_context: list[dict],
+    proposed_response: str
+) -> dict:
+    """Self-reflect on critical financial advice"""
+    
+    # Check if this is a critical query
+    if not self._is_critical_query(user_query):
+        return {"requires_reflection": False}
+    
+    # Reflection prompt
+    reflection_prompt = f"""
+    You are a financial AI assistant reviewing your own response for safety.
+    
+    User Query: {user_query}
+    
+    Your Proposed Response: {proposed_response}
+    
+    Retrieved Context: {json.dumps(retrieved_context[:3], indent=2)}
+    
+    Review Questions:
+    1. Does the response adequately warn about risks?
+    2. Are there any contradictions in the retrieved context?
+    3. Could this advice lead to financial harm?
+    4. Is the disclaimer clear that this is not professional advice?
+    5. Should we recommend consulting a certified financial advisor?
+    
+    Respond with:
+    - safety_score (1-10, where 10 is safest)
+    - concerns (list of potential issues)
+    - recommended_changes (suggested improvements)
+    """
+    
+    reflection_result = await self.llm.generate(reflection_prompt)
+    
+    # Parse reflection
+    safety_score = extract_safety_score(reflection_result)
+    
+    if safety_score < 7:
+        # Modify response to be more cautious
+        modified_response = await self._add_safety_warnings(proposed_response)
+        return {
+            "requires_reflection": True,
+            "safety_score": safety_score,
+            "original_response": proposed_response,
+            "modified_response": modified_response,
+            "reflection": reflection_result
+        }
+    else:
+        return {
+            "requires_reflection": True,
+            "safety_score": safety_score,
+            "approved": True
+        }
+
+
+EXAMPLE SELF-REFLECTION:
+
+User Query: "Should I take a personal loan to invest in stocks?"
+
+Step 1: Detect Critical
+  ✓ Contains "loan" + "invest" → CRITICAL
+
+Step 2: Retrieve Context
+  - Found 3 past queries about leveraged investing
+  - All responses emphasized high risk
+  - SEBI warnings about margin trading
+
+Step 3: Check Contradictions
+  ✓ All sources consistently warn against borrowing to invest
+
+Step 4: Generate Response
+  Original: "It depends on your risk tolerance..."
+  ❌ Too neutral!
+  
+  Reflected: "⚠️ CAUTION: Taking a loan to invest in stocks is EXTREMELY RISKY.
+             Here's why you should NOT do this:
+             1. Double risk: Loan payments + market losses
+             2. Forced selling: If market drops, you still owe loan
+             3. Interest costs: Loan interest may exceed stock returns
+             
+             This strategy has caused financial ruin for many investors.
+             
+             STRONGLY RECOMMEND: Only invest money you can afford to lose,
+             never borrowed funds. Consult a certified financial planner."
+
+Step 5: Safety Score
+  Original: 4/10 (too risky)
+  Reflected: 9/10 (appropriately cautious) ✅
+
+
+--- DIAGRAM 4.6: AGENTIC RAG FLOW ---
+
+[MERMAID CODE - Copy this to Mermaid Live Editor]
+
+graph TD
+    START[User Query] --> CLASSIFY[Classify Intent]
+    
+    CLASSIFY --> INTENT{Intent Type?}
+    
+    INTENT -->|Factual| PLAN1[Plan: Education + Web]
+    INTENT -->|Concept| PLAN2[Plan: Education + Past Explanations]
+    INTENT -->|Personalized| PLAN3[Plan: User History + Portfolios]
+    INTENT -->|Follow-up| PLAN4[Plan: Recent Conversation]
+    INTENT -->|Comparison| PLAN5[Plan: Multi-source]
+    INTENT -->|Critical| PLAN6[Plan: All Sources + Verification]
+    
+    PLAN1 --> EMBED[Generate Query Embedding]
+    PLAN2 --> EMBED
+    PLAN3 --> EMBED
+    PLAN4 --> EMBED
+    PLAN5 --> EMBED
+    PLAN6 --> EMBED
+    
+    EMBED --> SEARCH[Vector Similarity Search]
+    
+    SEARCH --> SOURCE1[(Conversations DB)]
+    SEARCH --> SOURCE2[(Educational Content)]
+    SEARCH --> SOURCE3[(User Portfolios)]
+    SEARCH --> SOURCE4[Web Search]
+    
+    SOURCE1 --> RESULTS[Retrieved Documents]
+    SOURCE2 --> RESULTS
+    SOURCE3 --> RESULTS
+    SOURCE4 --> RESULTS
+    
+    RESULTS --> VERIFY[Verify Relevance]
+    VERIFY --> FILTER[Filter by Similarity < 0.6]
+    
+    FILTER --> CRITICAL{Critical Query?}
+    
+    CRITICAL -->|Yes| REFLECT[Self-Reflection]
+    CRITICAL -->|No| CONTEXT[Prepare Context]
+    
+    REFLECT --> SAFETY{Safety Check}
+    SAFETY -->|Fail| MODIFY[Add Warnings]
+    SAFETY -->|Pass| CONTEXT
+    
+    MODIFY --> CONTEXT
+    CONTEXT --> AGENT[Pass to Agent]
+    
+    style CLASSIFY fill:#FF6B6B
+    style SEARCH fill:#4ECDC4
+    style VERIFY fill:#F7DC6F
+    style REFLECT fill:#E74C3C
+    style SAFETY fill:#E74C3C
+    style AGENT fill:#2ECC71
+
+[END MERMAID CODE]
+
+
+4.6.7 RAG PERFORMANCE OPTIMIZATION
+--------------------------------------------------------------------------------
+
+OPTIMIZATION TECHNIQUES:
+
+1. EMBEDDING CACHE
+   - Cache embeddings for common queries
+   - Avoid regenerating same embedding repeatedly
+   - Saves API calls and latency
+
+2. PARTIAL RESULTS
+   - Don't wait for all sources
+   - Return as soon as sufficient context retrieved
+   - Improves perceived latency
+
+3. SMART LIMITS
+   - Factual queries: Retrieve 3 docs (fast)
+   - Complex queries: Retrieve 10+ docs (comprehensive)
+   - Adaptive based on intent
+
+4. RERANKING (Future)
+   - Use cross-encoder for better relevance scoring
+   - Bi-encoder (fast) for initial retrieval
+   - Cross-encoder (accurate) for reranking top 20
+
+5. HYBRID SEARCH (Future)
+   - Combine vector search + keyword search
+   - Vector: Semantic similarity
+   - Keyword: Exact term matching
+   - Best of both worlds
+
+
+PERFORMANCE METRICS:
+
+Target Metrics:
+- Retrieval Latency: < 500ms
+- Relevance Precision: > 80% (retrieved docs are relevant)
+- Relevance Recall: > 70% (don't miss important docs)
+- Context Window Usage: < 50% of max tokens
+
+
+================================================================================
+
+SUMMARY: SECTIONS 4.5 & 4.6
+================================================================================
+
+4.5 MULTI-AGENT ORCHESTRATOR
+- Complexity assessment (Simple/Moderate/Complex/Critical)
+- Agent selection based on intent
+- Parallel vs sequential execution (asyncio.gather)
+- Result synthesis using LLM
+- Conflict resolution strategies
+
+4.6 AGENTIC RAG SYSTEM
+- Intent classification (6 types)
+- Retrieval planning based on intent
+- Vector similarity search (PGVector)
+- Multi-source retrieval (conversations, education, portfolios, web)
+- Relevance verification
+- Self-reflection for critical queries
+
+================================================================================
+
+This completes Section 4 (Core Components Design)!
+
+Next sections to create:
+- Section 5: Data Flow & Interactions
+- Section 6: API Design
+- Section 7: Key Algorithms
+- Section 8: External Integrations
+- Section 9: Security & Privacy
+- Section 10: Technology Justification
+- Section 11: Future Enhancements
+
+Which section would you like next?

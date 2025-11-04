@@ -1,0 +1,1295 @@
+================================================================================
+                    SYSTEM DESIGN DOCUMENT - SECTION 5 (CONT.)
+                    RAG RETRIEVAL & DATABASE FLOWS
+================================================================================
+
+5.3 RAG RETRIEVAL FLOW
+--------------------------------------------------------------------------------
+
+PURPOSE: Deep dive into how Agentic RAG retrieves relevant context
+
+This section details the intelligent retrieval process that powers our
+context-aware responses, from intent classification to vector similarity search.
+
+
+5.3.1 RAG SYSTEM ARCHITECTURE
+--------------------------------------------------------------------------------
+
+The RAG system operates in 5 DISTINCT PHASES:
+
+┌────────────────────────────────────────────────────────┐
+│  PHASE 1: INTENT CLASSIFICATION                        │
+│  Understand WHAT user wants to know                    │
+│  Time: ~200ms (LLM call)                               │
+└────────────────────────────────────────────────────────┘
+                          ↓
+┌────────────────────────────────────────────────────────┐
+│  PHASE 2: RETRIEVAL PLANNING                           │
+│  Decide WHERE to search and HOW                        │
+│  Time: ~20ms (rule-based)                              │
+└────────────────────────────────────────────────────────┘
+                          ↓
+┌────────────────────────────────────────────────────────┐
+│  PHASE 3: EMBEDDING GENERATION                         │
+│  Convert query to vector representation                │
+│  Time: ~150ms (Gemini Embeddings API)                  │
+└────────────────────────────────────────────────────────┘
+                          ↓
+┌────────────────────────────────────────────────────────┐
+│  PHASE 4: VECTOR SIMILARITY SEARCH                     │
+│  Find semantically similar content                     │
+│  Time: ~100ms (PGVector index)                         │
+└────────────────────────────────────────────────────────┘
+                          ↓
+┌────────────────────────────────────────────────────────┐
+│  PHASE 5: RELEVANCE VERIFICATION                       │
+│  Filter and rank retrieved documents                   │
+│  Time: ~30ms (threshold filtering)                     │
+└────────────────────────────────────────────────────────┘
+
+TOTAL RAG LATENCY: ~500ms
+
+
+5.3.2 DETAILED WALKTHROUGH: EDUCATIONAL QUERY
+--------------------------------------------------------------------------------
+
+EXAMPLE: "What is compound interest?"
+
+┌──────────────────────────────────────────────────────────────┐
+│  PHASE 1: INTENT CLASSIFICATION                              │
+├──────────────────────────────────────────────────────────────┤
+│  Input:                                                      │
+│    user_query = "What is compound interest?"                 │
+│    conversation_history = []  (no prior context)             │
+│                                                              │
+│  DSPy Signature Call:                                        │
+│    IntentClassificationSignature(                            │
+│      user_query="What is compound interest?",                │
+│      conversation_history=""                                 │
+│    )                                                         │
+│                                                              │
+│  LLM Prompt (to Gemini):                                     │
+│    "Classify the intent of this query:                       │
+│     User: 'What is compound interest?'                       │
+│                                                              │
+│     Intent options:                                          │
+│     - FACTUAL_QUESTION: Asking for objective facts           │
+│     - CONCEPT_EXPLANATION: Wants to understand concept       │
+│     - PERSONALIZED_ADVICE: Needs recommendation              │
+│     - FOLLOW_UP_QUESTION: Referring to previous topic        │
+│     - COMPARISON_REQUEST: Comparing options                  │
+│     - CRITICAL_DECISION: High-stakes financial decision      │
+│                                                              │
+│     Respond with intent category and confidence."            │
+│                                                              │
+│  LLM Response:                                               │
+│    {                                                         │
+│      "intent": "CONCEPT_EXPLANATION",                        │
+│      "confidence": 0.98,                                     │
+│      "reasoning": "User asking 'what is' indicates they      │
+│                    want to learn/understand a financial      │
+│                    concept, not just a fact."                │
+│    }                                                         │
+│                                                              │
+│  Time: 200ms                                                 │
+└──────────────────────────────────────────────────────────────┘
+                            ↓
+┌──────────────────────────────────────────────────────────────┐
+│  PHASE 2: RETRIEVAL PLANNING                                 │
+├──────────────────────────────────────────────────────────────┤
+│  Based on Intent: CONCEPT_EXPLANATION                        │
+│                                                              │
+│  Planning Rules Applied:                                     │
+│    Rule 1: Concept explanation → educational_content         │
+│    Rule 2: Concept explanation → past assistant messages     │
+│    Rule 3: No web search needed (concept in our DB)          │
+│                                                              │
+│  Retrieval Plan Generated:                                   │
+│    {                                                         │
+│      "sources": [                                            │
+│        "educational_content",                                │
+│        "conversations"                                       │
+│      ],                                                      │
+│      "filters": {                                            │
+│        "role": "assistant",  // Only AI explanations         │
+│        "topic": "interest"   // Filter by topic              │
+│      },                                                      │
+│      "limit": 5,             // Top 5 results per source     │
+│      "similarity_threshold": 0.6,  // Discard if > 0.6       │
+│      "rerank": true          // Re-sort by relevance         │
+│    }                                                         │
+│                                                              │
+│  Time: 20ms                                                  │
+└──────────────────────────────────────────────────────────────┘
+                            ↓
+┌──────────────────────────────────────────────────────────────┐
+│  PHASE 3: EMBEDDING GENERATION                               │
+├──────────────────────────────────────────────────────────────┤
+│  Input Text: "What is compound interest?"                    │
+│                                                              │
+│  Embedding Service Call:                                     │
+│    POST https://generativelanguage.googleapis.com/          │
+│         v1beta/models/embedding-001:embedContent             │
+│                                                              │
+│    Request Body:                                             │
+│      {                                                       │
+│        "model": "models/embedding-001",                      │
+│        "content": {                                          │
+│          "parts": [{                                         │
+│            "text": "What is compound interest?"              │
+│          }]                                                  │
+│        }                                                     │
+│      }                                                       │
+│                                                              │
+│  Response:                                                   │
+│    {                                                         │
+│      "embedding": {                                          │
+│        "values": [                                           │
+│          0.0234, -0.1542, 0.8765, ..., 0.3412               │
+│        ]  // 1536 dimensions                                │
+│      }                                                       │
+│    }                                                         │
+│                                                              │
+│  Embedding Vector:                                           │
+│    query_embedding = [0.0234, -0.1542, 0.8765, ..., 0.3412] │
+│                                                              │
+│  Time: 150ms                                                 │
+└──────────────────────────────────────────────────────────────┘
+                            ↓
+┌──────────────────────────────────────────────────────────────┐
+│  PHASE 4A: VECTOR SEARCH - EDUCATIONAL CONTENT               │
+├──────────────────────────────────────────────────────────────┤
+│  SQL Query:                                                  │
+│    SELECT                                                    │
+│      id,                                                     │
+│      title,                                                  │
+│      topic,                                                  │
+│      level,                                                  │
+│      content,                                                │
+│      summary,                                                │
+│      embedding <-> :query_embedding as similarity_distance   │
+│    FROM educational_content                                  │
+│    WHERE topic ILIKE '%interest%'                            │
+│    ORDER BY similarity_distance ASC                          │
+│    LIMIT 5;                                                  │
+│                                                              │
+│  Query Execution:                                            │
+│    - PGVector uses ivfflat index on embedding column         │
+│    - Computes cosine distance for each row                   │
+│    - Returns top 5 most similar                              │
+│                                                              │
+│  Results:                                                    │
+│    1. {                                                      │
+│         title: "Compound Interest - Definition",             │
+│         topic: "interest",                                   │
+│         level: "beginner",                                   │
+│         content: "Compound interest is interest calculated   │
+│                   on initial principal and accumulated...",  │
+│         similarity_distance: 0.05  // Very similar! ✓        │
+│       }                                                      │
+│                                                              │
+│    2. {                                                      │
+│         title: "Simple vs Compound Interest",                │
+│         topic: "interest",                                   │
+│         level: "beginner",                                   │
+│         content: "Simple interest is calculated only on...", │
+│         similarity_distance: 0.12  // Related ✓              │
+│       }                                                      │
+│                                                              │
+│    3. {                                                      │
+│         title: "Time Value of Money",                        │
+│         topic: "financial_concepts",                         │
+│         level: "intermediate",                               │
+│         content: "Money available now is worth more...",     │
+│         similarity_distance: 0.28  // Somewhat related       │
+│       }                                                      │
+│                                                              │
+│    4. {                                                      │
+│         title: "Investment Returns",                         │
+│         topic: "investing",                                  │
+│         level: "beginner",                                   │
+│         content: "Returns can be simple or compound...",     │
+│         similarity_distance: 0.34  // Loosely related        │
+│       }                                                      │
+│                                                              │
+│    5. {                                                      │
+│         title: "Rule of 72",                                 │
+│         topic: "financial_planning",                         │
+│         level: "intermediate",                               │
+│         content: "Quick way to estimate doubling time...",   │
+│         similarity_distance: 0.41  // Related concept        │
+│       }                                                      │
+│                                                              │
+│  Time: 80ms                                                  │
+└──────────────────────────────────────────────────────────────┘
+                            ↓
+┌──────────────────────────────────────────────────────────────┐
+│  PHASE 4B: VECTOR SEARCH - CONVERSATION HISTORY              │
+├──────────────────────────────────────────────────────────────┤
+│  SQL Query:                                                  │
+│    SELECT                                                    │
+│      content,                                                │
+│      role,                                                   │
+│      created_at,                                             │
+│      response_data,                                          │
+│      embedding <-> :query_embedding as similarity_distance   │
+│    FROM messages                                             │
+│    WHERE role = 'assistant'                                  │
+│      AND user_id = :user_id                                  │
+│      AND created_at > NOW() - INTERVAL '30 days'             │
+│    ORDER BY similarity_distance ASC                          │
+│    LIMIT 5;                                                  │
+│                                                              │
+│  Results:                                                    │
+│    1. {                                                      │
+│         content: "Compound interest means earning interest   │
+│                   on your interest. It's like a snowball...",│
+│         created_at: "2025-10-15T14:30:00Z",                  │
+│         similarity_distance: 0.08  // User asked before! ✓   │
+│       }                                                      │
+│                                                              │
+│    2. {                                                      │
+│         content: "The difference between simple and          │
+│                   compound interest is...",                  │
+│         created_at: "2025-10-20T09:15:00Z",                  │
+│         similarity_distance: 0.15  // Related past query ✓   │
+│       }                                                      │
+│                                                              │
+│    [3 more results with distances 0.22, 0.38, 0.45]          │
+│                                                              │
+│  Time: 70ms                                                  │
+└──────────────────────────────────────────────────────────────┘
+                            ↓
+┌──────────────────────────────────────────────────────────────┐
+│  PHASE 5: RELEVANCE VERIFICATION & FILTERING                 │
+├──────────────────────────────────────────────────────────────┤
+│  Combined Results: 10 documents (5 from each source)         │
+│                                                              │
+│  Step 1: Apply Similarity Threshold                          │
+│    threshold = 0.6                                           │
+│    Filter: Keep only if similarity_distance < 0.6            │
+│                                                              │
+│    Before: 10 documents                                      │
+│    After: 8 documents (2 removed: distances 0.65, 0.72)      │
+│                                                              │
+│  Step 2: Remove Duplicates                                   │
+│    Check for near-identical content                          │
+│    Method: Fuzzy string matching                             │
+│                                                              │
+│    Found: Educational content #1 and Conversation #1         │
+│           are explaining the same thing                      │
+│    Action: Keep Educational (more structured)                │
+│                                                              │
+│    After: 7 documents                                        │
+│                                                              │
+│  Step 3: Re-rank by Relevance                                │
+│    If rerank = true (from plan)                              │
+│    Sort by: similarity_distance (ascending)                  │
+│               + freshness (recent = higher)                  │
+│               + user_level_match (prefer beginner content)   │
+│                                                              │
+│    Ranking Formula:                                          │
+│      score = (1 - similarity_distance) * 0.7                 │
+│             + freshness_score * 0.2                          │
+│             + level_match_score * 0.1                        │
+│                                                              │
+│  Step 4: Truncate to Limit                                   │
+│    Take top 5 after re-ranking                               │
+│                                                              │
+│  Final Retrieved Context:                                    │
+│    1. "Compound Interest - Definition" (score: 0.92)         │
+│    2. "Simple vs Compound Interest" (score: 0.85)            │
+│    3. Past explanation from Oct 15 (score: 0.83)             │
+│    4. "Time Value of Money" (score: 0.71)                    │
+│    5. "Investment Returns" (score: 0.68)                     │
+│                                                              │
+│  Time: 30ms                                                  │
+└──────────────────────────────────────────────────────────────┘
+                            ↓
+┌──────────────────────────────────────────────────────────────┐
+│  OUTPUT: CONTEXT PACKAGE FOR AGENT                           │
+├──────────────────────────────────────────────────────────────┤
+│  {                                                           │
+│    "retrieved_documents": [                                  │
+│      {                                                       │
+│        "source": "educational_content",                      │
+│        "title": "Compound Interest - Definition",            │
+│        "content": "Compound interest is...",                 │
+│        "relevance_score": 0.92                               │
+│      },                                                      │
+│      // ... 4 more documents                                 │
+│    ],                                                        │
+│    "total_retrieved": 5,                                     │
+│    "retrieval_time_ms": 500,                                 │
+│    "sources_used": ["educational_content", "conversations"], │
+│    "confidence": 0.92  // Based on best match                │
+│  }                                                           │
+│                                                              │
+│  This context is now passed to Educational Agent to          │
+│  generate a comprehensive, informed response.                │
+└──────────────────────────────────────────────────────────────┘
+
+
+TOTAL RAG FLOW TIME: 500ms ✓
+
+
+5.3.3 DETAILED WALKTHROUGH: FOLLOW-UP QUERY
+--------------------------------------------------------------------------------
+
+EXAMPLE: User asks "What about dividends?" after discussing "Apple stock"
+
+┌──────────────────────────────────────────────────────────────┐
+│  CONTEXT: Previous Conversation                              │
+├──────────────────────────────────────────────────────────────┤
+│  Message #1 (User): "Tell me about Apple stock"              │
+│  Message #2 (AI): "Apple (AAPL) is trading at $150.25..."    │
+│  Message #3 (User): "What about dividends?"  ← Current query │
+└──────────────────────────────────────────────────────────────┘
+                            ↓
+┌──────────────────────────────────────────────────────────────┐
+│  PHASE 1: INTENT CLASSIFICATION (Context-Aware)              │
+├──────────────────────────────────────────────────────────────┤
+│  Input:                                                      │
+│    user_query = "What about dividends?"                      │
+│    conversation_history = [                                  │
+│      "Tell me about Apple stock",                            │
+│      "Apple (AAPL) is trading at $150.25..."                 │
+│    ]                                                         │
+│                                                              │
+│  LLM Prompt:                                                 │
+│    "Given the conversation:                                  │
+│     User: 'Tell me about Apple stock'                        │
+│     AI: 'Apple (AAPL) is trading at $150.25...'              │
+│                                                              │
+│     User now asks: 'What about dividends?'                   │
+│                                                              │
+│     This is clearly a FOLLOW_UP_QUESTION.                    │
+│     The 'dividends' refers to Apple's dividends.             │
+│                                                              │
+│     Classify intent and extract context."                    │
+│                                                              │
+│  LLM Response:                                               │
+│    {                                                         │
+│      "intent": "FOLLOW_UP_QUESTION",                         │
+│      "confidence": 0.95,                                     │
+│      "context_entity": "AAPL",  // Extracted from history!   │
+│      "specific_aspect": "dividends",                         │
+│      "reasoning": "User referring to Apple from previous     │
+│                    message, now asking about its dividends"  │
+│    }                                                         │
+│                                                              │
+│  Time: 200ms                                                 │
+└──────────────────────────────────────────────────────────────┘
+                            ↓
+┌──────────────────────────────────────────────────────────────┐
+│  PHASE 2: RETRIEVAL PLANNING (Follow-up Specific)            │
+├──────────────────────────────────────────────────────────────┤
+│  Special Planning for FOLLOW_UP_QUESTION:                    │
+│                                                              │
+│  Rule 1: MUST retrieve recent conversation history           │
+│          (to maintain context continuity)                    │
+│                                                              │
+│  Rule 2: Retrieve content related to specific aspect         │
+│          (dividends in this case)                            │
+│                                                              │
+│  Rule 3: Fetch real-time data if entity identified           │
+│          (Apple's dividend data)                             │
+│                                                              │
+│  Retrieval Plan:                                             │
+│    {                                                         │
+│      "sources": [                                            │
+│        "conversations",     // High priority for follow-ups  │
+│        "educational_content",  // Explain dividends          │
+│        "yahoo_finance"      // Real Apple dividend data      │
+│      ],                                                      │
+│      "filters": {                                            │
+│        "user_id": "123e4567...",                             │
+│        "time_range": "last_24_hours",  // Recent only!       │
+│        "conversation_id": "550e8400..."  // Same chat        │
+│      },                                                      │
+│      "context_expansion": true,  // Expand "dividends" query │
+│      "limit": 10  // More context needed for follow-ups      │
+│    }                                                         │
+│                                                              │
+│  Time: 20ms                                                  │
+└──────────────────────────────────────────────────────────────┘
+                            ↓
+┌──────────────────────────────────────────────────────────────┐
+│  PHASE 3: QUERY EXPANSION                                    │
+├──────────────────────────────────────────────────────────────┤
+│  Original Query: "What about dividends?"                     │
+│                                                              │
+│  Problem: Too vague for good retrieval                       │
+│                                                              │
+│  Solution: EXPAND using context                              │
+│                                                              │
+│  Expanded Query:                                             │
+│    "What are Apple's dividends? AAPL dividend yield"         │
+│                                                              │
+│  Context Added:                                              │
+│    - Entity: "Apple" / "AAPL" (from conversation)            │
+│    - Specificity: "dividend yield" (common dividend metric)  │
+│                                                              │
+│  This expanded query gives better embedding!                 │
+│                                                              │
+│  Generate Embedding:                                         │
+│    embedding = generate_embedding(                           │
+│      "What are Apple's dividends? AAPL dividend yield"       │
+│    )                                                         │
+│                                                              │
+│  Time: 150ms                                                 │
+└──────────────────────────────────────────────────────────────┘
+                            ↓
+┌──────────────────────────────────────────────────────────────┐
+│  PHASE 4: MULTI-SOURCE RETRIEVAL                             │
+├──────────────────────────────────────────────────────────────┤
+│  Source 1: Recent Conversation (HIGH PRIORITY)               │
+│                                                              │
+│    SELECT * FROM messages                                    │
+│    WHERE conversation_id = '550e8400...'                     │
+│      AND created_at > NOW() - INTERVAL '24 hours'            │
+│    ORDER BY created_at DESC                                  │
+│    LIMIT 10;                                                 │
+│                                                              │
+│    Results:                                                  │
+│      - "Tell me about Apple stock"                           │
+│      - "Apple (AAPL) is trading at $150.25, P/E 28.5..."     │
+│      ✓ Retrieved 2 messages from current conversation        │
+│                                                              │
+│  Source 2: Educational Content (Vector Search)               │
+│                                                              │
+│    SELECT * FROM educational_content                         │
+│    WHERE embedding <-> :query_embedding < 0.6                │
+│    ORDER BY embedding <-> :query_embedding                   │
+│    LIMIT 5;                                                  │
+│                                                              │
+│    Results:                                                  │
+│      1. "Dividend - Definition" (dist: 0.10)                 │
+│      2. "Dividend Yield Explained" (dist: 0.18)              │
+│      3. "Dividend vs Capital Gains" (dist: 0.32)             │
+│      ✓ Retrieved 3 relevant educational pieces               │
+│                                                              │
+│  Source 3: Yahoo Finance API (Real-time Data)                │
+│                                                              │
+│    ticker = yfinance.Ticker("AAPL")                          │
+│    dividend_data = {                                         │
+│      "dividend_yield": ticker.info.get("dividendYield"),     │
+│      "dividend_rate": ticker.info.get("dividendRate"),       │
+│      "payout_ratio": ticker.info.get("payoutRatio"),         │
+│      "ex_dividend_date": ticker.info.get("exDividendDate")   │
+│    }                                                         │
+│                                                              │
+│    Results:                                                  │
+│      {                                                       │
+│        "dividend_yield": 0.0051,  // 0.51%                   │
+│        "dividend_rate": 0.96,     // $0.96 annual            │
+│        "payout_ratio": 0.15,      // 15% of earnings         │
+│        "ex_dividend_date": "2025-11-10"                      │
+│      }                                                       │
+│      ✓ Retrieved current Apple dividend data                 │
+│                                                              │
+│  Time: 100ms (parallel fetching)                             │
+└──────────────────────────────────────────────────────────────┘
+                            ↓
+┌──────────────────────────────────────────────────────────────┐
+│  PHASE 5: CONTEXT SYNTHESIS                                  │
+├──────────────────────────────────────────────────────────────┤
+│  Combine all retrieved information:                          │
+│                                                              │
+│  Context Package:                                            │
+│    {                                                         │
+│      "conversation_context": {                               │
+│        "entity_discussed": "AAPL (Apple)",                   │
+│        "previous_messages": [                                │
+│          "Tell me about Apple stock",                        │
+│          "Apple (AAPL) is trading at $150.25..."             │
+│        ]                                                     │
+│      },                                                      │
+│      "educational_context": [                                │
+│        "Dividend - Definition",                              │
+│        "Dividend Yield Explained"                            │
+│      ],                                                      │
+│      "real_time_data": {                                     │
+│        "symbol": "AAPL",                                     │
+│        "dividend_yield": "0.51%",                            │
+│        "annual_dividend": "$0.96",                           │
+│        "payout_ratio": "15%"                                 │
+│      },                                                      │
+│      "retrieval_confidence": 0.95,                           │
+│      "context_continuity": true  // Successfully linked!     │
+│    }                                                         │
+│                                                              │
+│  This rich context enables agent to generate response like:  │
+│                                                              │
+│  "Since we're discussing Apple (AAPL), let me tell you       │
+│   about its dividends:                                       │
+│                                                              │
+│   Apple currently pays an annual dividend of $0.96 per       │
+│   share, which gives a dividend yield of 0.51%. This is      │
+│   relatively low compared to traditional dividend stocks...  │
+│                                                              │
+│   [Full contextual response using all retrieved data]"       │
+│                                                              │
+│  Time: 30ms                                                  │
+└──────────────────────────────────────────────────────────────┘
+
+
+TOTAL RAG FLOW TIME: 500ms ✓
+
+KEY DIFFERENCE FROM SIMPLE QUERY:
+- Context expansion crucial for follow-ups
+- Recent conversation history HIGH priority
+- Real-time data fetched based on extracted entity
+- Maintains conversation continuity
+
+
+5.3.4 RAG PERFORMANCE OPTIMIZATION TECHNIQUES
+--------------------------------------------------------------------------------
+
+TECHNIQUE 1: EMBEDDING CACHING
+┌────────────────────────────────────────────────────────┐
+│  Problem: Generating embeddings is slow (~150ms)       │
+│  Solution: Cache common queries                        │
+├────────────────────────────────────────────────────────┤
+│  Implementation:                                       │
+│    cache = {                                           │
+│      "what is mutual fund": [0.023, -0.154, ...],      │
+│      "what is stock": [0.045, 0.223, ...],             │
+│      ...                                               │
+│    }                                                   │
+│                                                        │
+│  Cache Hit:                                            │
+│    Time: ~1ms (memory lookup)                          │
+│    Savings: 149ms per hit                              │
+│                                                        │
+│  Cache Miss:                                           │
+│    Generate embedding → Store in cache → Return        │
+│    Time: 150ms (no savings first time)                 │
+│                                                        │
+│  Cache Strategy:                                       │
+│    - LRU (Least Recently Used) eviction                │
+│    - Max 1000 entries                                  │
+│    - TTL: 7 days                                       │
+└────────────────────────────────────────────────────────┘
+
+TECHNIQUE 2: APPROXIMATE NEAREST NEIGHBOR (ANN)
+┌────────────────────────────────────────────────────────┐
+│  Problem: Exact vector search slow on large datasets   │
+│  Solution: Use ANN algorithms (ivfflat, HNSW)          │
+├────────────────────────────────────────────────────────┤
+│  Current (MVP): ivfflat index                          │
+│    - Approximate search (99% accurate)                 │
+│    - Fast: ~50-100ms for 10K vectors                   │
+│                                                        │
+│  Future: HNSW (Hierarchical Navigable Small World)     │
+│    - Even faster: ~20-40ms                             │
+│    - Higher accuracy: 99.5%                            │
+│    - More memory usage                                 │
+│                                                        │
+│  Trade-off: Speed vs Accuracy                          │
+│    Exact search: 100% accurate, slow                   │
+│    ANN: 99%+ accurate, fast ✓                          │
+└────────────────────────────────────────────────────────┘
+
+TECHNIQUE 3: SMART FILTERING
+┌────────────────────────────────────────────────────────┐
+│  Problem: Searching entire DB is wasteful              │
+│  Solution: Pre-filter before vector search             │
+├────────────────────────────────────────────────────────┤
+│  Example:                                              │
+│    Bad:  Search ALL messages (100K rows)               │
+│    Good: Filter by user_id first (500 rows)            │
+│          Then vector search                            │
+│                                                        │
+│  Speedup: 200x faster (100K → 500 rows)                │
+│                                                        │
+│  Filters Applied:                                      │
+│    - user_id (personalized retrieval)                  │
+│    - time_range (recent conversations)                 │
+│    - topic (educational content)                       │
+│    - role (assistant vs user messages)                 │
+└────────────────────────────────────────────────────────┘
+
+TECHNIQUE 4: PARALLEL RETRIEVAL
+┌────────────────────────────────────────────────────────┐
+│  Problem: Sequential searches are slow                 │
+│  Solution: Fetch from multiple sources in parallel     │
+├────────────────────────────────────────────────────────┤
+│  Sequential:                                           │
+│    Search conversations: 70ms                          │
+│    Search education: 80ms                              │
+│    Search web: 200ms                                   │
+│    Total: 350ms                                        │
+│                                                        │
+│  Parallel (asyncio.gather):                            │
+│    All three searches: max(70, 80, 200) = 200ms        │
+│    Savings: 150ms (43% faster!)                        │
+└────────────────────────────────────────────────────────┘
+
+TECHNIQUE 5: RESULT TRUNCATION
+┌────────────────────────────────────────────────────────┐
+│  Problem: Large context wastes tokens                  │
+│  Solution: Retrieve top K, send only relevant          │
+├────────────────────────────────────────────────────────┤
+│  Adaptive K Selection:                                 │
+│    Simple query: K = 3 (sufficient)                    │
+│    Complex query: K = 10 (comprehensive)               │
+│    Critical query: K = 15 (thorough)                   │
+│                                                        │
+│  Token Budget:                                         │
+│    Max context: 8000 tokens                            │
+│    Reserve for response: 2000 tokens                   │
+│    Available for retrieval: 6000 tokens                │
+│                                                        │
+│  Truncation Strategy:                                  │
+│    1. Retrieve top K documents                         │
+│    2. Count total tokens                               │
+│    3. If > budget: Remove lowest-ranked docs           │
+│    4. Ensure at least 2 docs always included           │
+└────────────────────────────────────────────────────────┘
+
+
+PERFORMANCE SUMMARY:
+
+Optimization           | Baseline | Optimized | Improvement
+-----------------------|----------|-----------|-------------
+Embedding Generation   | 150ms    | 1ms*      | 99% (cached)
+Vector Search          | 200ms    | 50ms      | 75% (ivfflat)
+Multi-source Retrieval | 350ms    | 200ms     | 43% (parallel)
+Total RAG Latency      | 700ms    | 300ms     | 57% faster ✓
+
+*Cache hit rate: ~40% for common queries
+
+
+--- DIAGRAM 5.3: RAG RETRIEVAL FLOW ---
+
+[MERMAID CODE - Copy this to Mermaid Live Editor]
+
+graph TD
+    START[User Query] --> INTENT[Classify Intent]
+    
+    INTENT --> PLAN[Plan Retrieval Strategy]
+    
+    PLAN --> EXPAND{Follow-up Query?}
+    EXPAND -->|Yes| CTX_EXPAND[Expand with Context]
+    EXPAND -->|No| EMBED[Generate Embedding]
+    CTX_EXPAND --> EMBED
+    
+    EMBED --> CACHE{Cached?}
+    CACHE -->|Yes| USE_CACHE[Use Cached Embedding - 1ms]
+    CACHE -->|No| GEN_EMB[Generate New - 150ms]
+    
+    USE_CACHE --> PARALLEL[Parallel Retrieval]
+    GEN_EMB --> STORE_CACHE[Store in Cache]
+    STORE_CACHE --> PARALLEL
+    
+    PARALLEL --> SRC1[Source 1: Conversations]
+    PARALLEL --> SRC2[Source 2: Education]
+    PARALLEL --> SRC3[Source 3: External API]
+    
+    SRC1 --> FILTER1[Filter by user_id, time]
+    SRC2 --> FILTER2[Filter by topic, level]
+    SRC3 --> FETCH[Fetch Real-time Data]
+    
+    FILTER1 --> VSEARCH1[Vector Search]
+    FILTER2 --> VSEARCH2[Vector Search]
+    
+    VSEARCH1 --> COMBINE[Combine Results]
+    VSEARCH2 --> COMBINE
+    FETCH --> COMBINE
+    
+    COMBINE --> VERIFY[Verify Relevance]
+    VERIFY --> THRESHOLD[Apply Similarity Threshold]
+    THRESHOLD --> DEDUP[Remove Duplicates]
+    DEDUP --> RERANK[Re-rank by Score]
+    RERANK --> TRUNCATE[Truncate to Top K]
+    
+    TRUNCATE --> OUTPUT[Context Package for Agent]
+    
+    style INTENT fill:#FF6B6B
+    style PARALLEL fill:#4ECDC4
+    style VSEARCH1 fill:#F7DC6F
+    style VSEARCH2 fill:#F7DC6F
+    style COMBINE fill:#BB8FCE
+    style OUTPUT fill:#2ECC71
+
+[END MERMAID CODE]
+
+
+================================================================================
+
+5.4 DATABASE INTERACTION FLOW
+--------------------------------------------------------------------------------
+
+PURPOSE: How the system interacts with PostgreSQL database
+
+This section covers database operations including reads, writes, transactions,
+and connection management.
+
+
+5.4.1 DATABASE CONNECTION ARCHITECTURE
+--------------------------------------------------------------------------------
+
+CONNECTION POOLING STRATEGY:
+
+┌────────────────────────────────────────────────────────┐
+│  DATABASE CONNECTION POOL                              │
+├────────────────────────────────────────────────────────┤
+│  Technology: SQLAlchemy async + asyncpg                │
+│  Pool Size: 20 connections                             │
+│  Overflow: 10 additional connections                   │
+│  Timeout: 30 seconds                                   │
+│  Recycle: 3600 seconds (1 hour)                        │
+└────────────────────────────────────────────────────────┘
+
+WHY POOLING?
+
+Without Pooling:
+  Each request opens new connection → Slow (~200ms)
+  Thousands of requests → Thousands of connections → DB overload
+
+With Pooling:
+  Reuse existing connections → Fast (~1ms)
+  Max 30 concurrent connections → Controlled load
+  Automatic cleanup → No connection leaks
+
+
+IMPLEMENTATION:
+
+# services/database.py
+
+from sqlalchemy.ext.asyncio import (
+    create_async_engine, 
+    AsyncSession, 
+    async_sessionmaker
+)
+
+class DatabaseService:
+    """Singleton database service with connection pooling"""
+    
+    _instance = None
+    _engine = None
+    _session_factory = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+    
+    async def initialize(self, database_url: str):
+        """Initialize database engine and session factory"""
+        
+        # Create async engine with connection pooling
+        self._engine = create_async_engine(
+            database_url,
+            echo=False,  # Set True for SQL logging
+            pool_size=20,  # Base pool size
+            max_overflow=10,  # Additional connections allowed
+            pool_timeout=30,  # Wait up to 30s for connection
+            pool_recycle=3600,  # Recycle connections after 1 hour
+            pool_pre_ping=True,  # Verify connection before use
+        )
+        
+        # Create session factory
+        self._session_factory = async_sessionmaker(
+            self._engine,
+            class_=AsyncSession,
+            expire_on_commit=False  # Keep objects accessible after commit
+        )
+        
+        logger.info("Database connection pool initialized")
+    
+    async def get_session(self) -> AsyncSession:
+        """Get database session from pool"""
+        if not self._session_factory:
+            raise RuntimeError("Database not initialized")
+        
+        return self._session_factory()
+    
+    async def close(self):
+        """Close all database connections"""
+        if self._engine:
+            await self._engine.dispose()
+            logger.info("Database connections closed")
+
+
+USAGE IN FASTAPI:
+
+# main.py
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan manager"""
+    # Startup
+    db_service = DatabaseService()
+    await db_service.initialize(settings.DATABASE_URL)
+    
+    yield  # Application runs
+    
+    # Shutdown
+    await db_service.close()
+
+app = FastAPI(lifespan=lifespan)
+
+
+FASTAPI DEPENDENCY:
+
+# Dependencies for route handlers
+
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    """Provide database session to route handlers"""
+    db_service = DatabaseService()
+    session = await db_service.get_session()
+    
+    try:
+        yield session  # Handler uses this session
+        await session.commit()  # Auto-commit if successful
+    except Exception as e:
+        await session.rollback()  # Auto-rollback on error
+        raise
+    finally:
+        await session.close()  # Always close session
+
+
+# Usage in route
+@router.post("/api/chat/message")
+async def chat_message(
+    request: ChatRequest,
+    db: AsyncSession = Depends(get_db),  # Injected!
+    current_user: User = Depends(get_current_user)
+):
+    # Use db session here
+    message = Message(...)
+    db.add(message)
+    await db.flush()  # Get message ID without committing
+    return {"message_id": message.id}
+    # Auto-commit happens after return
+
+
+5.4.2 COMMON DATABASE OPERATIONS
+--------------------------------------------------------------------------------
+
+OPERATION 1: CREATE USER MESSAGE
+┌──────────────────────────────────────────────────────────────┐
+│  Action: Store incoming user message with embedding          │
+│  Tables: messages                                            │
+│  Transaction: Single INSERT                                  │
+├──────────────────────────────────────────────────────────────┤
+│  async def store_user_message(                               │
+│      db: AsyncSession,                                       │
+│      conversation_id: UUID,                                  │
+│      user_id: UUID,                                          │
+│      content: str                                            │
+│  ) -> Message:                                               │
+│      # Step 1: Generate embedding                            │
+│      embedding = await generate_embedding(content)           │
+│                                                              │
+│      # Step 2: Create message object                         │
+│      message = Message(                                      │
+│          id=uuid.uuid4(),                                    │
+│          conversation_id=conversation_id,                    │
+│          user_id=user_id,                                    │
+│          role="user",                                        │
+│          content=content,                                    │
+│          embedding=embedding,                                │
+│          input_type="text",                                  │
+│          created_at=datetime.utcnow()                        │
+│      )                                                       │
+│                                                              │
+│      # Step 3: Add to session and flush                      │
+│      db.add(message)                                         │
+│      await db.flush()  # Assign ID without committing        │
+│                                                              │
+│      return message                                          │
+│                                                              │
+│  Time: ~200ms (150ms embedding + 50ms DB insert)             │
+└──────────────────────────────────────────────────────────────┘
+
+OPERATION 2: STORE AI RESPONSE WITH METADATA
+┌──────────────────────────────────────────────────────────────┐
+│  Action: Store AI response with agent metadata               │
+│  Tables: messages, conversations (update)                    │
+│  Transaction: INSERT + UPDATE                                │
+├──────────────────────────────────────────────────────────────┤
+│  async def store_ai_response(                                │
+│      db: AsyncSession,                                       │
+│      conversation_id: UUID,                                  │
+│      user_id: UUID,                                          │
+│      response: str,                                          │
+│      metadata: dict                                          │
+│  ) -> Message:                                               │
+│      # Step 1: Generate embedding for response               │
+│      embedding = await generate_embedding(response)          │
+│                                                              │
+│      # Step 2: Create AI message                             │
+│      message = Message(                                      │
+│          id=uuid.uuid4(),                                    │
+│          conversation_id=conversation_id,                    │
+│          user_id=user_id,                                    │
+│          role="assistant",                                   │
+│          content=response,                                   │
+│          embedding=embedding,                                │
+│          agent_used=metadata.get("agent_used"),              │
+│          confidence_score=metadata.get("confidence"),        │
+│          processing_time=metadata.get("processing_time"),    │
+│          tokens_used=metadata.get("tokens_used"),            │
+│          model_used=metadata.get("model_used"),              │
+│          response_data=metadata.get("structured_data"),      │
+│          created_at=datetime.utcnow()                        │
+│      )                                                       │
+│                                                              │
+│      db.add(message)                                         │
+│      await db.flush()                                        │
+│                                                              │
+│      # Step 3: Update conversation statistics                │
+│      result = await db.execute(                              │
+│          update(Conversation)                                │
+│          .where(Conversation.id == conversation_id)          │
+│          .values(                                            │
+│              total_messages=Conversation.total_messages + 1, │
+│              last_message_at=datetime.utcnow()               │
+│          )                                                   │
+│      )                                                       │
+│                                                              │
+│      return message                                          │
+│                                                              │
+│  Time: ~250ms (150ms embedding + 100ms DB ops)               │
+└──────────────────────────────────────────────────────────────┘
+
+OPERATION 3: VECTOR SIMILARITY SEARCH
+┌──────────────────────────────────────────────────────────────┐
+│  Action: Find similar messages using vector search           │
+│  Tables: messages                                            │
+│  Transaction: SELECT with vector operator                    │
+├──────────────────────────────────────────────────────────────┤
+│  async def search_similar_messages(                          │
+│      db: AsyncSession,                                       │
+│      query_embedding: list[float],                           │
+│      user_id: UUID,                                          │
+│      limit: int = 5                                          │
+│  ) -> list[Message]:                                         │
+│      # Build query with vector similarity                    │
+│      query = select(Message).where(                          │
+│          Message.user_id == user_id,                         │
+│          Message.role == "assistant"                         │
+│      ).order_by(                                             │
+│          Message.embedding.cosine_distance(query_embedding)  │
+│      ).limit(limit)                                          │
+│                                                              │
+│      # Execute query                                         │
+│      result = await db.execute(query)                        │
+│      messages = result.scalars().all()                       │
+│                                                              │
+│      return messages                                         │
+│                                                              │
+│  Time: ~50-100ms (with ivfflat index)                        │
+└──────────────────────────────────────────────────────────────┘
+
+OPERATION 4: CREATE PORTFOLIO (TRANSACTION)
+┌──────────────────────────────────────────────────────────────┐
+│  Action: Generate and store portfolio                        │
+│  Tables: portfolios, messages (link)                         │
+│  Transaction: Multi-step with rollback capability            │
+├──────────────────────────────────────────────────────────────┤
+│  async def create_portfolio(                                 │
+│      db: AsyncSession,                                       │
+│      user_id: UUID,                                          │
+│      portfolio_data: dict                                    │
+│  ) -> Portfolio:                                             │
+│      try:                                                    │
+│          # Step 1: Create portfolio record                   │
+│          portfolio = Portfolio(                              │
+│              id=uuid.uuid4(),                                │
+│              user_id=user_id,                                │
+│              risk_level=portfolio_data["risk_level"],        │
+│              stocks=portfolio_data["stocks"],  # JSONB       │
+│              expected_return=portfolio_data["exp_return"],   │
+│              risk_score=portfolio_data["risk_score"],        │
+│              diversification_score=portfolio_data["div"],    │
+│              sector_distribution=portfolio_data["sectors"],  │
+│              created_at=datetime.utcnow()                    │
+│          )                                                   │
+│                                                              │
+│          db.add(portfolio)                                   │
+│          await db.flush()  # Get portfolio ID                │
+│                                                              │
+│          # Step 2: Link to message (optional)                │
+│          if message_id := portfolio_data.get("message_id"):  │
+│              await db.execute(                               │
+│                  update(Message)                             │
+│                  .where(Message.id == message_id)            │
+│                  .values(                                    │
+│                      response_data={                         │
+│                          "portfolio_id": str(portfolio.id)   │
+│                      }                                       │
+│                  )                                           │
+│              )                                               │
+│                                                              │
+│          await db.commit()  # Commit transaction             │
+│          return portfolio                                    │
+│                                                              │
+│      except Exception as e:                                  │
+│          await db.rollback()  # Rollback on error            │
+│          logger.error(f"Portfolio creation failed: {e}")     │
+│          raise                                               │
+│                                                              │
+│  Time: ~150ms                                                │
+└──────────────────────────────────────────────────────────────┘
+
+
+5.4.3 DATABASE TRANSACTION PATTERNS
+--------------------------------------------------------------------------------
+
+PATTERN 1: AUTO-COMMIT (Simple Operations)
+┌────────────────────────────────────────────────────────┐
+│  Use Case: Single table insert/update                  │
+│  Pattern: Let dependency handle commit                 │
+├────────────────────────────────────────────────────────┤
+│  @router.post("/messages")                             │
+│  async def create_message(                             │
+│      data: MessageCreate,                              │
+│      db: AsyncSession = Depends(get_db)                │
+│  ):                                                    │
+│      message = Message(**data.dict())                  │
+│      db.add(message)                                   │
+│      await db.flush()  # Flush to get ID               │
+│      return {"id": message.id}                         │
+│      # Auto-commit happens after return ✓              │
+└────────────────────────────────────────────────────────┘
+
+PATTERN 2: EXPLICIT TRANSACTION (Multi-step)
+┌────────────────────────────────────────────────────────┐
+│  Use Case: Multiple related operations                 │
+│  Pattern: Explicit commit/rollback control             │
+├────────────────────────────────────────────────────────┤
+│  async def complex_operation(db: AsyncSession):        │
+│      try:                                              │
+│          # Step 1                                      │
+│          user = User(...)                              │
+│          db.add(user)                                  │
+│          await db.flush()                              │
+│                                                        │
+│          # Step 2 (uses user.id from step 1)           │
+│          conversation = Conversation(                  │
+│              user_id=user.id                           │
+│          )                                             │
+│          db.add(conversation)                          │
+│          await db.flush()                              │
+│                                                        │
+│          # Both succeed → commit                       │
+│          await db.commit()                             │
+│                                                        │
+│      except Exception as e:                            │
+│          # Any step fails → rollback all               │
+│          await db.rollback()                           │
+│          raise                                         │
+└────────────────────────────────────────────────────────┘
+
+PATTERN 3: NESTED TRANSACTIONS (Savepoints)
+┌────────────────────────────────────────────────────────┐
+│  Use Case: Partial rollback capability                 │
+│  Pattern: Use savepoints for sub-transactions          │
+├────────────────────────────────────────────────────────┤
+│  async def operation_with_savepoint(                   │
+│      db: AsyncSession                                  │
+│  ):                                                    │
+│      # Main transaction starts                         │
+│      user = User(...)                                  │
+│      db.add(user)                                      │
+│      await db.flush()                                  │
+│                                                        │
+│      # Create savepoint                                │
+│      async with db.begin_nested():                     │
+│          try:                                          │
+│              # Risky operation                         │
+│              portfolio = create_portfolio(...)         │
+│              db.add(portfolio)                         │
+│          except Exception as e:                        │
+│              # Rollback to savepoint only              │
+│              # User creation still intact ✓            │
+│              logger.warning("Portfolio failed, skip")  │
+│                                                        │
+│      # Commit main transaction                         │
+│      await db.commit()                                 │
+└────────────────────────────────────────────────────────┘
+
+
+5.4.4 QUERY OPTIMIZATION TECHNIQUES
+--------------------------------------------------------------------------------
+
+TECHNIQUE 1: EAGER LOADING (Avoid N+1 Queries)
+┌────────────────────────────────────────────────────────┐
+│  Problem: Loading related objects one-by-one           │
+│                                                        │
+│  Bad (N+1 queries):                                    │
+│    conversations = await db.execute(                   │
+│        select(Conversation)                            │
+│    )                                                   │
+│    for conv in conversations:                          │
+│        messages = await db.execute(                    │
+│            select(Message)                             │
+│            .where(Message.conversation_id == conv.id)  │
+│        )  # ← Separate query for EACH conversation!    │
+│                                                        │
+│  Time: 1 + N queries (slow!)                           │
+│                                                        │
+│  Good (1 query):                                       │
+│    conversations = await db.execute(                   │
+│        select(Conversation)                            │
+│        .options(selectinload(Conversation.messages))   │
+│    )  # ← Load messages with conversations             │
+│                                                        │
+│  Time: 1-2 queries (fast!) ✓                           │
+└────────────────────────────────────────────────────────┘
+
+TECHNIQUE 2: PAGINATION
+┌────────────────────────────────────────────────────────┐
+│  Problem: Loading thousands of messages at once        │
+│                                                        │
+│  Bad:                                                  │
+│    messages = await db.execute(                        │
+│        select(Message)  # Returns ALL messages!        │
+│    )                                                   │
+│  Memory: Huge, Response: Slow                          │
+│                                                        │
+│  Good:                                                 │
+│    messages = await db.execute(                        │
+│        select(Message)                                 │
+│        .order_by(Message.created_at.desc())            │
+│        .offset((page - 1) * page_size)                 │
+│        .limit(page_size)  # e.g., 20 per page          │
+│    )                                                   │
+│  Memory: Small, Response: Fast ✓                       │
+└────────────────────────────────────────────────────────┘
+
+TECHNIQUE 3: INDEX USAGE
+┌────────────────────────────────────────────────────────┐
+│  Indexes Created:                                      │
+│                                                        │
+│  1. Primary Keys (auto-indexed)                        │
+│     - users.id, messages.id, etc.                      │
+│                                                        │
+│  2. Foreign Keys                                       │
+│     - messages.conversation_id                         │
+│     - messages.user_id                                 │
+│                                                        │
+│  3. Frequently Filtered Columns                        │
+│     - messages.role                                    │
+│     - messages.created_at                              │
+│     - conversations.user_id                            │
+│                                                        │
+│  4. Vector Indexes (!!CRITICAL!!)                      │
+│     - messages.embedding (ivfflat)                     │
+│     - educational_content.embedding (ivfflat)          │
+│                                                        │
+│  Query WITH index: ~50ms                               │
+│  Query WITHOUT index: ~5000ms (100x slower!)           │
+└────────────────────────────────────────────────────────┘
+
+TECHNIQUE 4: SELECT SPECIFIC COLUMNS
+┌────────────────────────────────────────────────────────┐
+│  Problem: Loading unnecessary large columns            │
+│                                                        │
+│  Bad:                                                  │
+│    messages = await db.execute(                        │
+│        select(Message)  # Loads ALL columns!           │
+│    )  # Including large embedding vectors (1536-dim)   │
+│                                                        │
+│  Good:                                                 │
+│    messages = await db.execute(                        │
+│        select(                                         │
+│            Message.id,                                 │
+│            Message.content,                            │
+│            Message.created_at                          │
+│            # Skip embedding if not needed              │
+│        )                                               │
+│    )                                                   │
+│                                                        │
+│  Data Transfer: 90% reduction ✓                        │
+└────────────────────────────────────────────────────────┘
+
+
+--- DIAGRAM 5.4: DATABASE INTERACTION FLOW ---
+
+[MERMAID CODE - Copy this to Mermaid Live Editor]
+
+graph TD
+    START[API Request] --> POOL[Connection Pool]
+    
+    POOL --> AVAIL{Connection Available?}
+    
+    AVAIL -->|Yes - 1ms| GET_CONN[Get Connection]
+    AVAIL -->|No| WAIT[Wait for Free Connection]
+    WAIT -->|Timeout| ERROR[Connection Timeout Error]
+    WAIT -->|Available| GET_CONN
+    
+    GET_CONN --> BEGIN_TX[Begin Transaction]
+    
+    BEGIN_TX --> OP1[Operation 1: INSERT user message]
+    OP1 --> FLUSH1[Flush to get ID]
+    
+    FLUSH1 --> OP2[Operation 2: Generate embedding]
+    OP2 --> OP3[Operation 3: Vector search]
+    
+    OP3 --> OP4[Operation 4: INSERT AI response]
+    OP4 --> FLUSH2[Flush to get ID]
+    
+    FLUSH2 --> OP5[Operation 5: UPDATE conversation]
+    
+    OP5 --> CHECK{All Operations OK?}
+    
+    CHECK -->|Yes| COMMIT[Commit Transaction]
+    CHECK -->|No| ROLLBACK[Rollback Transaction]
+    
+    COMMIT --> CLOSE[Close Session]
+    ROLLBACK --> CLOSE
+    ERROR --> CLOSE
+    
+    CLOSE --> RETURN_POOL[Return Connection to Pool]
+    RETURN_POOL --> RESPONSE[Return API Response]
+    
+    style POOL fill:#4ECDC4
+    style CHECK fill:#FF6B6B
+    style COMMIT fill:#2ECC71
+    style ROLLBACK fill:#E74C3C
+    style RETURN_POOL fill:#F7DC6F
+
+[END MERMAID CODE]
+
+
+================================================================================
+
+SUMMARY: SECTIONS 5.3 & 5.4
+================================================================================
+
+5.3 RAG RETRIEVAL FLOW
+- 5-phase RAG process (500ms total)
+- Detailed walkthrough: Educational query
+- Context-aware follow-up query handling
+- Query expansion for ambiguous queries
+- Multi-source parallel retrieval
+- 5 performance optimization techniques
+- Cache strategy (99% faster for hits)
+
+5.4 DATABASE INTERACTION FLOW
+- Connection pooling architecture (20+10 pool)
+- 4 common database operations with code
+- 3 transaction patterns (auto/explicit/nested)
+- 4 query optimization techniques
+- N+1 query prevention
+- Index usage impact (100x speedup)
+- Complete transaction lifecycle diagram
+
+================================================================================
+
+SECTION 5 (DATA FLOW & INTERACTIONS) - COMPLETE! ✅
+
+Next sections available:
+- Section 6: API Design
+- Section 7: Key Algorithms
+- Section 8: External Integrations
+- Section 9: Security & Privacy
+- Section 10: Technology Justification
+- Section 11: Future Enhancements
+
+Which section would you like next?

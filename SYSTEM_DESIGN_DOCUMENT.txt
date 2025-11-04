@@ -1,0 +1,1694 @@
+================================================================================
+                    FINMENTOR AI - MULTIAGENT FINANCIAL 
+                         ADVISORY PLATFORM
+                              
+                    SYSTEM DESIGN DOCUMENT (SDD)
+================================================================================
+
+Project Team:
+- Roshan Varghese (2448046)
+- Varun Alfred Dsouza (2448059)
+
+Project Guide: Dr. Saleema J.S
+Department: Data Science & Statistics
+Institution: Christ (Deemed to be University)
+
+Course Code: MDS581A
+Course Name: PROJECT-II
+
+Document Version: 1.0
+Date: October 29, 2025
+
+================================================================================
+
+TABLE OF CONTENTS
+
+1. INTRODUCTION.....................................................Page 3
+   1.1 Document Purpose
+   1.2 System Overview
+   1.3 Design Objectives
+   1.4 Document Organization
+   1.5 Intended Audience
+
+2. SYSTEM ARCHITECTURE..............................................Page 5
+   2.1 Architecture Overview
+   2.2 Multi-Agent Architecture
+   2.3 Component Hierarchy
+   2.4 Communication Patterns
+   2.5 Design Rationale
+
+3. DATABASE DESIGN.................................................Page 12
+   3.1 Database Selection Rationale
+   3.2 Entity-Relationship Model
+   3.3 Database Schema Details
+   3.4 Vector Embeddings Architecture
+   3.5 Data Integrity and Constraints
+
+4. CORE COMPONENTS DESIGN..........................................Page 18
+   4.1 Query Router Agent
+   4.2 Educational Content Agent
+   4.3 Market Data Agent
+   4.4 Portfolio Builder Agent
+   4.5 Multi-Agent Orchestrator
+   4.6 Agentic RAG System
+
+5. DATA FLOW & INTERACTIONS........................................Page 26
+   5.1 User Query Processing Flow
+   5.2 Multi-Agent Execution Flow
+   5.3 RAG Retrieval Flow
+   5.4 Database Interaction Flow
+
+6. API DESIGN......................................................Page 30
+   6.1 RESTful API Architecture
+   6.2 Endpoint Specifications
+   6.3 Request/Response Formats
+   6.4 Authentication Flow
+
+7. KEY ALGORITHMS..................................................Page 34
+   7.1 Intent Classification Algorithm
+   7.2 Complexity Assessment Algorithm
+   7.3 Portfolio Generation Algorithm
+   7.4 Vector Similarity Search
+
+8. EXTERNAL INTEGRATIONS...........................................Page 38
+   8.1 Yahoo Finance API Integration
+   8.2 Google Gemini API Integration
+   8.3 Error Handling and Retry Logic
+
+9. SECURITY & PRIVACY DESIGN.......................................Page 40
+   9.1 Authentication Mechanism
+   9.2 Data Protection Strategy
+   9.3 API Security
+
+10. TECHNOLOGY JUSTIFICATION.......................................Page 42
+    10.1 Backend Framework Selection
+    10.2 AI/ML Framework Selection
+    10.3 Database Selection
+    10.4 Integration Services
+
+11. FUTURE ENHANCEMENTS............................................Page 44
+    11.1 Planned Features
+    11.2 Scalability Considerations
+    11.3 Architecture Evolution
+
+APPENDICES.........................................................Page 46
+    A. Glossary of Terms
+    B. Technology Stack Summary
+    C. API Endpoint Reference
+    D. Database Table Definitions
+
+REFERENCES.........................................................Page 50
+
+================================================================================
+                            1. INTRODUCTION
+================================================================================
+
+1.1 DOCUMENT PURPOSE
+--------------------------------------------------------------------------------
+
+This System Design Document (SDD) provides a comprehensive technical 
+specification for the FinMentor AI multi-agent financial advisory platform. 
+The document serves as:
+
+1. A detailed blueprint for system implementation
+2. A reference guide for developers and maintainers
+3. Documentation for academic evaluation and review
+4. A foundation for future system enhancements
+
+The design focuses on creating a scalable, maintainable, and secure system 
+that leverages cutting-edge AI technologies to democratize financial advisory 
+services.
+
+
+1.2 SYSTEM OVERVIEW
+--------------------------------------------------------------------------------
+
+FinMentor AI is an intelligent financial advisory platform that combines:
+
+- Multi-Agent AI Architecture: Specialized agents for different financial tasks
+- Agentic RAG (Retrieval-Augmented Generation): Intelligent context retrieval
+- Real-time Market Data: Integration with Yahoo Finance API
+- Educational Content: 538+ curated financial terms and concepts
+- Portfolio Management: Risk-based investment recommendations
+
+KEY CAPABILITIES:
+✓ Financial Education: Explain concepts adaptively (beginner to advanced)
+✓ Market Analysis: Real-time stock data, fundamentals, and trends
+✓ Portfolio Building: Generate diversified portfolios based on risk tolerance
+✓ Conversational AI: Natural language query processing
+✓ Context Awareness: Remember and learn from past conversations
+
+TARGET USERS:
+- Indian retail investors (age 20-45)
+- Beginners to intermediate financial knowledge
+- Individuals seeking affordable financial guidance
+
+
+1.3 DESIGN OBJECTIVES
+--------------------------------------------------------------------------------
+
+PRIMARY OBJECTIVES:
+
+1. ACCESSIBILITY
+   - Provide 24/7 financial advisory service
+   - Zero-cost to minimal-cost solution
+   - Simple, conversational interface
+
+2. INTELLIGENCE
+   - Specialized agents for different financial domains
+   - Context-aware responses using RAG
+   - Adaptive explanations based on user level
+
+3. ACCURACY
+   - Real-time market data integration
+   - Self-verification for critical financial advice
+   - Evidence-based recommendations
+
+4. SCALABILITY
+   - Modular architecture supporting additional agents
+   - Extensible to handle more users and features
+   - Database designed for growth
+
+5. SECURITY
+   - Secure authentication (JWT tokens)
+   - Password encryption (bcrypt)
+   - Data privacy protection
+
+DESIGN CONSTRAINTS:
+
+- Development Timeline: 8 weeks
+- Budget: Free-tier services only
+- Platform: Web-first approach (mobile-ready design)
+- API Limits: Yahoo Finance and Gemini free tiers
+- Scope: Educational/informational only (no real trading)
+
+
+1.4 DOCUMENT ORGANIZATION
+--------------------------------------------------------------------------------
+
+This document is organized as follows:
+
+Section 2: SYSTEM ARCHITECTURE
+- High-level system design
+- Multi-agent architecture
+- Component interactions
+
+Section 3: DATABASE DESIGN
+- Data model and schema
+- Vector embeddings setup
+- Relationship diagrams
+
+Section 4: CORE COMPONENTS
+- Detailed design of 4 core agents
+- Orchestrator logic
+- RAG system architecture
+
+Section 5: DATA FLOW
+- Request processing flows
+- Agent execution patterns
+- Database interactions
+
+Section 6: API DESIGN
+- RESTful endpoint specifications
+- Request/response formats
+- Authentication mechanism
+
+Section 7: ALGORITHMS
+- Key algorithmic designs
+- Decision logic
+- Optimization strategies
+
+Section 8-11: Supporting Design Elements
+- External integrations
+- Security measures
+- Technology choices
+- Future roadmap
+
+
+1.5 INTENDED AUDIENCE
+--------------------------------------------------------------------------------
+
+This document is intended for:
+
+1. ACADEMIC REVIEWERS
+   - Professors and evaluation committee
+   - Understanding design decisions and architecture
+
+2. DEVELOPMENT TEAM
+   - Current developers (Roshan, Varun)
+   - Future maintainers and contributors
+
+3. TECHNICAL STAKEHOLDERS
+   - Project guide and mentors
+   - Potential collaborators or employers
+
+4. SYSTEM USERS (Advanced)
+   - Technical users interested in system internals
+   - API consumers and integrators
+
+PREREQUISITE KNOWLEDGE:
+- Basic understanding of REST APIs
+- Familiarity with database concepts
+- Knowledge of AI/ML fundamentals
+- Understanding of financial terminology (helpful but not required)
+
+
+================================================================================
+                        2. SYSTEM ARCHITECTURE
+================================================================================
+
+2.1 ARCHITECTURE OVERVIEW
+--------------------------------------------------------------------------------
+
+FinMentor AI follows a LAYERED ARCHITECTURE pattern with clear separation of 
+concerns. The system is designed as a modern, scalable multi-tier application.
+
+ARCHITECTURAL STYLE: Multi-Tier + Multi-Agent Hybrid
+
+CORE LAYERS:
+
+1. PRESENTATION LAYER (Future)
+   - Web Interface (React)
+   - Mobile Application (Planned)
+   - API Consumers
+
+2. API GATEWAY LAYER
+   - FastAPI Framework
+   - Request Routing
+   - Authentication/Authorization
+   - Rate Limiting
+
+3. APPLICATION LAYER
+   - Multi-Agent System (DSPy + LangChain)
+   - Business Logic
+   - Query Processing
+   - Response Generation
+
+4. DATA ACCESS LAYER
+   - PostgreSQL Database
+   - Vector Search (PGVector)
+   - ORM (SQLAlchemy)
+   - Caching (Future: Redis)
+
+5. INTEGRATION LAYER
+   - Yahoo Finance API
+   - Google Gemini API
+   - DuckDuckGo Search
+   - External Data Sources
+
+
+ARCHITECTURAL PRINCIPLES:
+
+✓ MODULARITY: Each component has single, well-defined responsibility
+✓ SCALABILITY: Horizontal scaling through stateless services
+✓ MAINTAINABILITY: Clear interfaces between layers
+✓ TESTABILITY: Components can be tested independently
+✓ SECURITY: Defense in depth with multiple security layers
+✓ PERFORMANCE: Caching and async processing where applicable
+
+
+--- DIAGRAM 1: HIGH-LEVEL SYSTEM ARCHITECTURE ---
+
+[MERMAID CODE - Copy this to Mermaid Live Editor]
+
+graph TB
+    subgraph "Client Layer"
+        WEB[Web Browser]
+        MOBILE[Mobile App - Future]
+    end
+    
+    subgraph "API Gateway Layer"
+        FASTAPI[FastAPI Server]
+        AUTH[Authentication Middleware]
+        ROUTER[Request Router]
+    end
+    
+    subgraph "Application Layer - Multi-Agent System"
+        CHAT[Chat Router]
+        RAG[Agentic RAG Service]
+        ORCH[Multi-Agent Orchestrator]
+        
+        subgraph "DSPy Agents"
+            QR[Query Router Agent]
+            EDU[Educational Agent]
+            MKT[Market Data Agent]
+            PORT[Portfolio Builder Agent]
+        end
+        
+        subgraph "LangChain Layer"
+            TOOLS[Financial Tools]
+            MEMORY[Conversation Memory]
+        end
+    end
+    
+    subgraph "Data Layer"
+        DB[(PostgreSQL + PGVector)]
+        CACHE[(Redis Cache - Future)]
+    end
+    
+    subgraph "External APIs"
+        YAHOO[Yahoo Finance API]
+        GEMINI[Google Gemini API]
+        DDG[DuckDuckGo Search]
+    end
+    
+    WEB --> FASTAPI
+    MOBILE -.-> FASTAPI
+    FASTAPI --> AUTH
+    AUTH --> ROUTER
+    ROUTER --> CHAT
+    
+    CHAT --> RAG
+    RAG --> DB
+    RAG --> ORCH
+    
+    ORCH --> QR
+    ORCH --> EDU
+    ORCH --> MKT
+    ORCH --> PORT
+    
+    QR --> TOOLS
+    EDU --> TOOLS
+    MKT --> TOOLS
+    PORT --> TOOLS
+    
+    TOOLS --> MEMORY
+    TOOLS --> DB
+    
+    MKT --> YAHOO
+    EDU --> GEMINI
+    QR --> GEMINI
+    CHAT --> DDG
+    
+    CACHE -.-> FASTAPI
+    
+    style FASTAPI fill:#4CAF50
+    style ORCH fill:#2196F3
+    style RAG fill:#FF9800
+    style DB fill:#9C27B0
+
+[END MERMAID CODE]
+
+
+2.2 MULTI-AGENT ARCHITECTURE
+--------------------------------------------------------------------------------
+
+The heart of FinMentor AI is its MULTI-AGENT SYSTEM that combines:
+- DSPy for structured reasoning
+- LangChain for tool orchestration
+- Agentic RAG for intelligent retrieval
+
+DESIGN PHILOSOPHY: "Specialized Experts Working Together"
+
+Rather than a single generalist AI, we employ multiple specialist agents,
+each expert in a specific financial domain. This approach provides:
+
+✓ Better accuracy (specialists outperform generalists)
+✓ Easier maintenance (modify one agent without affecting others)
+✓ Parallel processing (multiple agents work simultaneously)
+✓ Explainability (know which agent provided which insight)
+
+
+2.2.1 DSPy REASONING LAYER
+--------------------------------------------------------------------------------
+
+DSPy (Declarative Self-improving Python) provides the REASONING FOUNDATION.
+
+What is DSPy?
+- Framework for LLM-based reasoning with structured signatures
+- Defines input/output contracts for AI agents
+- Enables chain-of-thought reasoning
+- Self-optimizing through feedback
+
+Each agent is defined as a DSPy Signature:
+
+ANATOMY OF A DSPy AGENT:
+
+┌─────────────────────────────────────────────────┐
+│         DSPy Signature (Agent Template)         │
+├─────────────────────────────────────────────────┤
+│                                                 │
+│  INPUTS (What the agent needs to reason):      │
+│    - user_query: str                           │
+│    - context: str                              │
+│    - user_profile: str                         │
+│                                                 │
+│  REASONING PROCESS:                             │
+│    - Chain of Thought                          │
+│    - Step-by-step analysis                     │
+│    - Evidence gathering                        │
+│                                                 │
+│  OUTPUTS (What the agent produces):             │
+│    - response: str                             │
+│    - confidence: float                         │
+│    - reasoning: str                            │
+│                                                 │
+└─────────────────────────────────────────────────┘
+
+THE 4 CORE DSPY AGENTS:
+
+1. QUERY ROUTER AGENT
+   Purpose: Understand user intent and route to specialist
+   Signature: QueryIntent, Confidence → Agent Selection
+   
+2. EDUCATIONAL CONTENT AGENT
+   Purpose: Explain financial concepts adaptively
+   Signature: Concept, User Level → Explanation, Examples
+   
+3. MARKET DATA AGENT
+   Purpose: Fetch and interpret market data
+   Signature: Stock Symbol → Price Data, Analysis, Recommendation
+   
+4. PORTFOLIO BUILDER AGENT
+   Purpose: Generate investment portfolios
+   Signature: Risk Profile, Goals → Stock List, Allocation, Rationale
+
+
+2.2.2 LANGCHAIN ORCHESTRATION LAYER
+--------------------------------------------------------------------------------
+
+LangChain provides TOOL ORCHESTRATION and EXECUTION.
+
+What is LangChain?
+- Framework for building applications with LLMs
+- Provides tools, memory, and agent executors
+- Enables complex workflows and chaining
+
+LangChain Components in Our System:
+
+1. TOOLS (Actions agents can take):
+   - get_stock_data(): Fetch real Yahoo Finance data
+   - calculate_portfolio_metrics(): Sharpe ratio, beta, etc.
+   - search_financial_web(): DuckDuckGo search
+   - calculate_technical_indicators(): RSI, moving averages
+
+2. MEMORY (Conversation context):
+   - ConversationBufferWindowMemory (last 10 exchanges)
+   - Stores in PostgreSQL for persistence
+   - Enables follow-up questions
+
+3. AGENT EXECUTOR:
+   - Runs DSPy agents with tools
+   - Handles errors and retries
+   - Manages token limits
+
+
+--- DIAGRAM 2: MULTI-AGENT SYSTEM ARCHITECTURE ---
+
+[MERMAID CODE - Copy this to Mermaid Live Editor]
+
+graph TD
+    subgraph "Request Entry"
+        USER[User Query]
+    end
+    
+    subgraph "Agentic RAG Layer"
+        INTENT[Intent Classification]
+        RETRIEVE[Context Retrieval]
+        PLAN[Retrieval Planning]
+    end
+    
+    subgraph "Orchestrator"
+        ASSESS[Complexity Assessment]
+        SELECT[Agent Selection]
+        EXECUTE[Parallel Execution]
+        SYNTH[Result Synthesis]
+    end
+    
+    subgraph "DSPy Reasoning Layer"
+        subgraph "Core Agents"
+            ROUTER[Query Router<br/>Intent: Educational/Market/Portfolio]
+            EDU_AGENT[Educational Agent<br/>Explain: Concepts, Terms]
+            MKT_AGENT[Market Data Agent<br/>Fetch: Prices, Fundamentals]
+            PORT_AGENT[Portfolio Builder<br/>Generate: Allocations]
+        end
+    end
+    
+    subgraph "LangChain Tool Layer"
+        YAHOO_TOOL[Yahoo Finance Tool]
+        CALC_TOOL[Financial Calculators]
+        SEARCH_TOOL[Web Search Tool]
+        TECH_TOOL[Technical Indicators]
+    end
+    
+    subgraph "Data Sources"
+        YAHOO_API[Yahoo Finance API]
+        GEMINI_API[Google Gemini LLM]
+        DB_STORE[(PostgreSQL)]
+    end
+    
+    USER --> INTENT
+    INTENT --> PLAN
+    PLAN --> RETRIEVE
+    RETRIEVE --> DB_STORE
+    RETRIEVE --> ASSESS
+    
+    ASSESS --> SELECT
+    SELECT --> ROUTER
+    SELECT --> EDU_AGENT
+    SELECT --> MKT_AGENT
+    SELECT --> PORT_AGENT
+    
+    ROUTER --> EXECUTE
+    EDU_AGENT --> EXECUTE
+    MKT_AGENT --> EXECUTE
+    PORT_AGENT --> EXECUTE
+    
+    EXECUTE --> SYNTH
+    
+    ROUTER -.uses.-> GEMINI_API
+    EDU_AGENT -.uses.-> GEMINI_API
+    MKT_AGENT -.uses.-> YAHOO_TOOL
+    PORT_AGENT -.uses.-> CALC_TOOL
+    
+    YAHOO_TOOL --> YAHOO_API
+    SEARCH_TOOL --> GEMINI_API
+    
+    SYNTH --> USER
+    
+    style ASSESS fill:#FF6B6B
+    style EXECUTE fill:#4ECDC4
+    style SYNTH fill:#45B7D1
+    style ROUTER fill:#FFA07A
+    style EDU_AGENT fill:#98D8C8
+    style MKT_AGENT fill:#F7DC6F
+    style PORT_AGENT fill:#BB8FCE
+
+[END MERMAID CODE]
+
+
+2.3 COMPONENT HIERARCHY
+--------------------------------------------------------------------------------
+
+The system follows a HIERARCHICAL COMPONENT STRUCTURE:
+
+LEVEL 1: INFRASTRUCTURE LAYER
+├─ FastAPI Application Server
+├─ PostgreSQL Database Server
+└─ Environment Configuration
+
+LEVEL 2: SERVICE LAYER (Singletons)
+├─ DatabaseService (db connection management)
+├─ AgenticRAG (intelligent retrieval)
+├─ DataSourcesManager (external API coordination)
+└─ AuthService (authentication & authorization)
+
+LEVEL 3: BUSINESS LOGIC LAYER
+├─ HybridFinMentorSystem (main AI orchestration)
+│   ├─ DSPyFinancialReasoner (reasoning agents)
+│   └─ LangChainExecutor (tool execution)
+├─ MultiAgentOrchestrator (agent coordination)
+└─ FinancialTools (calculations & data fetching)
+
+LEVEL 4: ROUTING LAYER
+├─ ChatRouter (main conversation endpoint)
+├─ AuthRouter (login/register)
+└─ UserRouter (profile management) [Future]
+
+LEVEL 5: PRESENTATION LAYER
+└─ Web Frontend (React) [Future]
+
+
+COMPONENT INTERACTION RULES:
+
+1. DOWNWARD DEPENDENCY ONLY
+   - Higher layers depend on lower layers
+   - Lower layers never depend on higher layers
+   
+2. SINGLETON SERVICES
+   - Database, RAG, DataSources are singletons
+   - Created once, reused throughout application
+   
+3. STATELESS AGENTS
+   - Agents don't maintain state
+   - All state stored in database or memory service
+   
+4. ASYNC FIRST
+   - All I/O operations are asynchronous
+   - Enables concurrent processing
+
+
+2.4 COMMUNICATION PATTERNS
+--------------------------------------------------------------------------------
+
+2.4.1 SYNCHRONOUS COMMUNICATION (Request-Response)
+--------------------------------------------------------------------------------
+
+Used for: User-facing API calls
+
+Pattern: HTTP REST API
+Flow: User → FastAPI → Agent → Database → Response
+
+Example:
+┌──────┐     POST /api/chat/message      ┌─────────┐
+│ User │ ──────────────────────────────> │ FastAPI │
+└──────┘                                  └─────────┘
+                                               │
+                                               ▼
+                                          ┌─────────┐
+                                          │  Agent  │
+                                          └─────────┘
+                                               │
+                                               ▼
+                                          ┌──────────┐
+                                          │ Database │
+                                          └──────────┘
+                                               │
+┌──────┐     JSON Response                    │
+│ User │ <───────────────────────────────────┘
+└──────┘
+
+Timeout: 30 seconds maximum
+Error Handling: Return user-friendly error message
+
+
+2.4.2 ASYNCHRONOUS COMMUNICATION (Parallel Execution)
+--------------------------------------------------------------------------------
+
+Used for: Multi-agent processing
+
+Pattern: Asyncio.gather() for parallel execution
+Flow: Query → [Agent1, Agent2, Agent3] in parallel → Synthesize
+
+Example - Complex Portfolio Query:
+
+┌─────────────────────────────────────────┐
+│   "Should I invest in tech stocks?"     │
+└─────────────────────────────────────────┘
+                  │
+                  ▼
+         ┌────────────────┐
+         │  Orchestrator  │
+         └────────────────┘
+                  │
+      ┌───────────┼───────────┐
+      ▼           ▼           ▼
+┌──────────┐ ┌──────────┐ ┌──────────┐
+│ Market   │ │   Risk   │ │Portfolio │
+│ Agent    │ │ Assessor │ │ Builder  │
+│ (AAPL,   │ │ (User    │ │ (Tech    │
+│  MSFT,   │ │  profile)│ │  stocks) │
+│  GOOGL)  │ │          │ │          │
+└──────────┘ └──────────┘ └──────────┘
+      │           │           │
+      └───────────┼───────────┘
+                  ▼
+         ┌────────────────┐
+         │   Synthesize   │
+         │    Results     │
+         └────────────────┘
+                  │
+                  ▼
+         "Based on analysis..."
+
+Parallel execution reduces response time from 15s → 5s!
+
+
+2.4.3 EVENT-DRIVEN COMMUNICATION (Future)
+--------------------------------------------------------------------------------
+
+Planned for: Real-time updates, notifications
+
+Pattern: WebSocket connections
+Use Cases:
+- Live stock price updates
+- Portfolio value changes
+- News alerts
+
+Not implemented in MVP, reserved for future enhancement.
+
+
+2.5 DESIGN RATIONALE
+--------------------------------------------------------------------------------
+
+2.5.1 WHY MULTI-AGENT INSTEAD OF SINGLE AGENT?
+--------------------------------------------------------------------------------
+
+DECISION: Use 4 specialized agents instead of 1 generalist
+
+RATIONALE:
+
+✓ ACCURACY: Specialists outperform generalists
+  - Educational agent focuses ONLY on teaching
+  - Market agent focuses ONLY on data accuracy
+  - Better than one agent trying to do everything
+
+✓ MAINTAINABILITY: Easy to update individual agents
+  - Change portfolio logic? Only update Portfolio Agent
+  - Improve education? Only modify Educational Agent
+  - No risk of breaking other functionality
+
+✓ PERFORMANCE: Parallel execution
+  - Multiple agents run simultaneously
+  - Complex queries answered faster
+  - Better user experience
+
+✓ EXPLAINABILITY: Know which agent provided which insight
+  - "Market Data Agent says AAPL is undervalued"
+  - "Portfolio Builder recommends diversification"
+  - Users understand where advice comes from
+
+✗ TRADE-OFF: More complexity
+  - Need orchestration logic
+  - More code to maintain
+  - But benefits outweigh costs for financial domain
+
+
+2.5.2 WHY DSPY + LANGCHAIN HYBRID?
+--------------------------------------------------------------------------------
+
+DECISION: Combine DSPy for reasoning + LangChain for tools
+
+RATIONALE:
+
+DSPy Provides:
+✓ Structured reasoning (not just text generation)
+✓ Chain-of-thought explanations
+✓ Type-safe agent signatures
+✓ Self-improvement capabilities
+
+LangChain Provides:
+✓ Rich ecosystem of tools
+✓ Memory management
+✓ Agent executors
+✓ External API integrations
+
+Together:
+✓ DSPy handles "thinking" (reasoning about finance)
+✓ LangChain handles "acting" (fetching data, calculations)
+✓ Best of both worlds!
+
+
+2.5.3 WHY AGENTIC RAG INSTEAD OF BASIC RAG?
+--------------------------------------------------------------------------------
+
+DECISION: Intelligent retrieval with intent classification
+
+RATIONALE:
+
+Basic RAG:
+┌─────────┐     ┌──────────┐     ┌──────┐
+│  Query  │ ──> │ Retrieve │ ──> │ LLM  │
+└─────────┘     └──────────┘     └──────┘
+Problems:
+✗ Always retrieves same sources
+✗ No understanding of query intent
+✗ Irrelevant context wastes tokens
+
+Agentic RAG:
+┌─────────┐     ┌───────────┐     ┌──────────┐     ┌──────┐
+│  Query  │ ──> │ Classify  │ ──> │ Plan &   │ ──> │ LLM  │
+│         │     │  Intent   │     │ Retrieve │     │      │
+└─────────┘     └───────────┘     └──────────┘     └──────┘
+
+Benefits:
+✓ Understands WHAT user wants
+✓ Retrieves from RIGHT sources
+✓ Adapts strategy per query type
+✓ Better, more relevant responses
+
+
+2.5.4 WHY POSTGRESQL + PGVECTOR?
+--------------------------------------------------------------------------------
+
+DECISION: PostgreSQL with PGVector extension
+
+RATIONALE:
+
+PostgreSQL:
+✓ Mature, reliable, battle-tested
+✓ ACID compliance (data integrity)
+✓ Strong community support
+✓ Free and open-source
+
+PGVector Extension:
+✓ Native vector similarity search in Postgres
+✓ No need for separate vector database
+✓ SQL queries + vector search together
+✓ Simpler architecture
+
+Alternative Considered: Pinecone/Weaviate
+✗ Additional service to manage
+✗ Extra cost
+✗ More complexity
+✓ PGVector is "good enough" for MVP
+
+
+================================================================================
+                        3. DATABASE DESIGN
+================================================================================
+
+3.1 DATABASE SELECTION RATIONALE
+--------------------------------------------------------------------------------
+
+DATABASE CHOICE: PostgreSQL 14+ with PGVector Extension
+
+KEY REQUIREMENTS:
+1. Store user data, conversations, portfolios
+2. Vector embeddings for semantic search (RAG)
+3. Handle concurrent users
+4. ACID compliance for financial data
+5. Free and open-source
+
+EVALUATION MATRIX:
+
+┌──────────────┬───────────┬────────────┬──────────┬──────────┐
+│   Feature    │PostgreSQL │   MongoDB  │  MySQL   │ Firebase │
+├──────────────┼───────────┼────────────┼──────────┼──────────┤
+│ Vector Search│    ✅     │     ❌     │    ❌    │    ❌    │
+│ (PGVector)   │           │            │          │          │
+├──────────────┼───────────┼────────────┼──────────┼──────────┤
+│ ACID         │    ✅     │     ⚠️     │    ✅    │    ⚠️    │
+│ Transactions │           │ (Limited)  │          │(Limited) │
+├──────────────┼───────────┼────────────┼──────────┼──────────┤
+│ JSON Support │    ✅     │     ✅     │    ⚠️    │    ✅    │
+│              │  (JSONB)  │  (Native)  │  (JSON)  │(NoSQL)   │
+├──────────────┼───────────┼────────────┼──────────┼──────────┤
+│ Mature &     │    ✅     │     ✅     │    ✅    │    ⚠️    │
+│ Reliable     │           │            │          │          │
+├──────────────┼───────────┼────────────┼──────────┼──────────┤
+│ Free Hosting │    ✅     │     ✅     │    ✅    │    ⚠️    │
+│              │(Railway)  │  (Atlas)   │(PlanetS) │(Limited) │
+├──────────────┼───────────┼────────────┼──────────┼──────────┤
+│ SQLAlchemy   │    ✅     │     ⚠️     │    ✅    │    ❌    │
+│ ORM Support  │ (Native)  │(Motor ORM) │(Native)  │          │
+└──────────────┴───────────┴────────────┴──────────┴──────────┘
+
+WINNER: PostgreSQL
+- Only option with native vector search (PGVector)
+- Best for financial data (ACID compliance)
+- Strong Python ecosystem (SQLAlchemy, asyncpg)
+
+
+3.2 ENTITY-RELATIONSHIP MODEL
+--------------------------------------------------------------------------------
+
+CORE ENTITIES:
+
+1. USER
+   - Represents system users (investors)
+   - Stores profile, risk tolerance, preferences
+
+2. CONVERSATION
+   - Represents a chat session
+   - Groups related messages together
+
+3. MESSAGE
+   - Individual user query or AI response
+   - Contains text + vector embedding for RAG
+
+4. PORTFOLIO
+   - Generated investment recommendations
+   - Linked to user and risk profile
+
+5. EDUCATIONAL_CONTENT (Future)
+   - Curated financial learning materials
+   - Vector embeddings for similarity search
+
+6. LEARNING_PROGRESS (Future)
+   - Tracks user's financial literacy journey
+   - Gamification elements
+
+RELATIONSHIPS:
+
+User (1) ──< has many >── (M) Conversation
+User (1) ──< has many >── (M) Portfolio
+User (1) ──< has many >── (M) Learning Progress
+
+Conversation (1) ──< contains >── (M) Message
+
+
+--- DIAGRAM 3: ENTITY-RELATIONSHIP DIAGRAM ---
+
+[MERMAID CODE - Copy this to Mermaid Live Editor]
+
+erDiagram
+    USER ||--o{ CONVERSATION : "has"
+    USER ||--o{ PORTFOLIO : "generates"
+    USER ||--o{ LEARNING_PROGRESS : "tracks"
+    USER ||--o{ MESSAGE : "sends"
+    
+    CONVERSATION ||--o{ MESSAGE : "contains"
+    
+    MESSAGE ||--o| MESSAGE_FEEDBACK : "receives"
+    
+    USER {
+        uuid id PK
+        string email UK
+        string username UK
+        string password_hash
+        string user_type
+        string risk_tolerance
+        jsonb financial_goals
+        timestamp created_at
+        timestamp last_login
+    }
+    
+    CONVERSATION {
+        uuid id PK
+        uuid user_id FK
+        string title
+        string topic
+        int total_messages
+        jsonb context
+        timestamp created_at
+        timestamp last_message_at
+    }
+    
+    MESSAGE {
+        uuid id PK
+        uuid conversation_id FK
+        uuid user_id FK
+        string role
+        text content
+        vector_1536 embedding
+        text voice_data
+        text image_data
+        jsonb response_data
+        float confidence_score
+        timestamp created_at
+    }
+    
+    PORTFOLIO {
+        uuid id PK
+        uuid user_id FK
+        string risk_level
+        jsonb stocks
+        float expected_return
+        float risk_score
+        timestamp created_at
+    }
+    
+    EDUCATIONAL_CONTENT {
+        uuid id PK
+        string title
+        string topic
+        string level
+        text content
+        text summary
+        vector_1536 embedding
+        timestamp created_at
+    }
+    
+    LEARNING_PROGRESS {
+        uuid id PK
+        uuid user_id FK
+        string topic
+        int progress_percent
+        jsonb completed_lessons
+        timestamp last_activity
+    }
+    
+    MESSAGE_FEEDBACK {
+        uuid id PK
+        uuid message_id FK
+        bool helpful
+        bool accurate
+        text user_comment
+        timestamp created_at
+    }
+
+[END MERMAID CODE]
+
+
+3.3 DATABASE SCHEMA DETAILS
+--------------------------------------------------------------------------------
+
+3.3.1 TABLE: USERS
+--------------------------------------------------------------------------------
+
+Purpose: Store user account information and preferences
+
+CREATE TABLE users (
+    -- Primary Identification
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email             VARCHAR(255) NOT NULL UNIQUE,
+    username          VARCHAR(100) NOT NULL UNIQUE,
+    full_name         VARCHAR(255),
+    
+    -- Authentication
+    hashed_password   VARCHAR(255) NOT NULL,
+    
+    -- User Profile
+    age               INTEGER CHECK (age >= 18 AND age <= 100),
+    user_type         VARCHAR(50) DEFAULT 'beginner',
+                      -- Values: 'beginner', 'intermediate', 'advanced'
+    education_level   VARCHAR(50) DEFAULT 'basic',
+                      -- Values: 'basic', 'moderate', 'high'
+    risk_tolerance    VARCHAR(50) DEFAULT 'moderate',
+                      -- Values: 'low', 'moderate', 'high'
+    financial_goals   JSONB DEFAULT '[]',
+                      -- Array of goals: ['retirement', 'home', 'education']
+    
+    -- Preferences
+    preferred_language VARCHAR(10) DEFAULT 'en',
+    preferred_output   VARCHAR(20) DEFAULT 'text',
+                      -- Values: 'text', 'voice', 'visual'
+    
+    -- Account Status
+    is_active         BOOLEAN DEFAULT TRUE,
+    is_verified       BOOLEAN DEFAULT FALSE,
+    is_premium        BOOLEAN DEFAULT FALSE,
+    
+    -- Timestamps
+    created_at        TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at        TIMESTAMP WITH TIME ZONE,
+    last_login        TIMESTAMP WITH TIME ZONE,
+    
+    -- Indexes
+    CONSTRAINT valid_email CHECK (email ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}$')
+);
+
+-- Indexes for Performance
+CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_users_username ON users(username);
+CREATE INDEX idx_users_created_at ON users(created_at DESC);
+
+FIELDS EXPLANATION:
+
+id: UUID (Universally Unique Identifier)
+  - Primary key
+  - Auto-generated
+  - Ensures no collisions across distributed systems
+
+hashed_password: VARCHAR(255)
+  - Bcrypt hash of user password
+  - Never store plain text passwords!
+  - Format: $2b$12$hash...
+
+financial_goals: JSONB
+  - JSON array stored in binary format
+  - Faster queries than regular JSON
+  - Example: ["retirement", "child_education", "home_purchase"]
+
+user_type: Determines response complexity
+  - beginner: Simple explanations, avoid jargon
+  - intermediate: Some technical terms OK
+  - advanced: Full technical analysis
+
+
+3.3.2 TABLE: CONVERSATIONS
+--------------------------------------------------------------------------------
+
+Purpose: Group related messages into conversation sessions
+
+CREATE TABLE conversations (
+    -- Primary Identification
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    
+    -- Conversation Metadata
+    title             VARCHAR(255),
+                      -- Auto-generated from first message
+    topic             VARCHAR(100),
+                      -- Categories: 'stocks', 'education', 'portfolio', etc.
+    
+    -- Conversation Statistics
+    total_messages    INTEGER DEFAULT 0,
+    sentiment         FLOAT CHECK (sentiment >= -1 AND sentiment <= 1),
+                      -- Average sentiment: -1 (negative) to 1 (positive)
+    satisfaction_rating INTEGER CHECK (satisfaction_rating BETWEEN 1 AND 5),
+                      -- User rating: 1 (poor) to 5 (excellent)
+    
+    -- Conversation State
+    context           JSONB DEFAULT '{}',
+                      -- Maintains conversation memory
+                      -- Example: {"discussed_stocks": ["AAPL", "MSFT"]}
+    
+    -- Timestamps
+    created_at        TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at        TIMESTAMP WITH TIME ZONE,
+    last_message_at   TIMESTAMP WITH TIME ZONE
+);
+
+-- Indexes
+CREATE INDEX idx_conversations_user_id ON conversations(user_id);
+CREATE INDEX idx_conversations_created_at ON conversations(user_id, created_at DESC);
+CREATE INDEX idx_conversations_topic ON conversations(topic);
+
+FIELDS EXPLANATION:
+
+context: JSONB
+  - Stores conversation state for continuity
+  - Tracks mentioned stocks, discussed topics
+  - Enables follow-up questions
+  - Example: {
+      "discussed_stocks": ["AAPL", "MSFT"],
+      "portfolio_generated": true,
+      "risk_profile": "moderate",
+      "last_agent": "portfolio_builder"
+    }
+
+sentiment: FLOAT (-1 to 1)
+  - Tracks overall conversation mood
+  - Helps identify frustrated users
+  - Calculated from message sentiment scores
+
+CASCADE DELETE:
+  - When user deleted → all conversations deleted
+  - Maintains referential integrity
+
+
+3.3.3 TABLE: MESSAGES
+--------------------------------------------------------------------------------
+
+Purpose: Store individual messages with vector embeddings for RAG
+
+CREATE TABLE messages (
+    -- Primary Identification
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    conversation_id   UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    
+    -- Message Content
+    role              VARCHAR(20) NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
+    content           TEXT NOT NULL,
+    input_type        VARCHAR(20) DEFAULT 'text',
+                      -- Values: 'text', 'voice', 'image', 'document'
+    
+    -- Vector Embedding for RAG (!!CRITICAL!!)
+    embedding         vector(1536),
+                      -- 1536-dimensional vector from OpenAI/Gemini embeddings
+                      -- Used for semantic similarity search
+    
+    -- Multimodal Data (Future)
+    voice_data        TEXT,
+                      -- Base64 encoded audio
+    image_data        TEXT,
+                      -- Base64 encoded image
+    document_data     TEXT,
+                      -- Base64 encoded document
+    
+    -- Response Metadata
+    agent_used        VARCHAR(50),
+                      -- Which agent generated this response
+    response_data     JSONB,
+                      -- Structured data (stock prices, portfolio details)
+    visual_response   JSONB,
+                      -- Chart/graph data for visualization
+    
+    -- Quality Metrics
+    confidence_score  FLOAT CHECK (confidence_score >= 0 AND confidence_score <= 1),
+                      -- Agent's confidence in response (0-1)
+    processing_time   FLOAT,
+                      -- Time taken to generate response (seconds)
+    tokens_used       INTEGER,
+                      -- Number of LLM tokens consumed
+    model_used        VARCHAR(50),
+                      -- e.g., 'gemini-pro', 'gpt-3.5-turbo'
+    
+    -- Timestamp
+    created_at        TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Indexes for Performance
+CREATE INDEX idx_messages_conversation ON messages(conversation_id, created_at);
+CREATE INDEX idx_messages_user ON messages(user_id, created_at DESC);
+CREATE INDEX idx_messages_role ON messages(role);
+
+-- Vector Index for Similarity Search (!!CRITICAL FOR RAG!!)
+CREATE INDEX idx_messages_embedding ON messages 
+USING ivfflat (embedding vector_cosine_ops)
+WITH (lists = 100);
+-- ivfflat: Inverted File with Flat Compression
+-- vector_cosine_ops: Use cosine similarity
+-- lists = 100: Number of clusters (tune based on data size)
+
+FIELDS EXPLANATION:
+
+embedding: vector(1536)
+  - THIS IS THE MAGIC! Enables semantic search
+  - Converts text to mathematical representation
+  - Similar meanings → similar vectors
+  - Example query:
+    SELECT content, embedding <-> query_embedding as distance
+    FROM messages
+    WHERE role = 'assistant'
+    ORDER BY distance
+    LIMIT 5;
+  
+  - The <-> operator calculates cosine distance
+  - Lower distance = more similar
+
+response_data: JSONB
+  - Stores structured API responses
+  - Example for stock query: {
+      "symbol": "AAPL",
+      "price": 150.25,
+      "pe_ratio": 28.5,
+      "market_cap": 2500000000000,
+      "recommendation": "buy"
+    }
+
+agent_used: VARCHAR(50)
+  - Tracks which agent answered
+  - Values: 'query_router', 'educational_agent', 
+            'market_data_agent', 'portfolio_builder'
+  - Useful for analytics and debugging
+
+
+3.3.4 TABLE: PORTFOLIOS
+--------------------------------------------------------------------------------
+
+Purpose: Store generated portfolio recommendations
+
+CREATE TABLE portfolios (
+    -- Primary Identification
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    
+    -- Portfolio Configuration
+    risk_level        VARCHAR(20) NOT NULL CHECK (risk_level IN ('low', 'medium', 'high')),
+    investment_amount DECIMAL(15, 2),
+                      -- Amount user wants to invest (optional)
+    
+    -- Portfolio Composition
+    stocks            JSONB NOT NULL,
+                      -- Array of stock allocations
+                      -- Example: [
+                      --   {"symbol": "HDFCBANK", "weight": 0.20, "shares": 10},
+                      --   {"symbol": "TCS", "weight": 0.20, "shares": 15}
+                      -- ]
+    
+    -- Portfolio Metrics
+    expected_return   FLOAT,
+                      -- Expected annual return (percentage)
+    risk_score        FLOAT CHECK (risk_score >= 1 AND risk_score <= 10),
+                      -- Risk score: 1 (safest) to 10 (riskiest)
+    diversification_score FLOAT CHECK (diversification_score >= 0 AND diversification_score <= 1),
+                      -- 0 (not diversified) to 1 (well diversified)
+    sector_distribution JSONB,
+                      -- Example: {"Banking": 0.4, "IT": 0.3, "FMCG": 0.3}
+    
+    -- Metadata
+    generation_method VARCHAR(50) DEFAULT 'equal_weight',
+                      -- Algorithm used: 'equal_weight', 'risk_parity', 'mean_variance'
+    rebalancing_frequency VARCHAR(20),
+                      -- 'monthly', 'quarterly', 'yearly'
+    
+    -- Timestamps
+    created_at        TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    last_updated      TIMESTAMP WITH TIME ZONE
+);
+
+-- Indexes
+CREATE INDEX idx_portfolios_user ON portfolios(user_id, created_at DESC);
+CREATE INDEX idx_portfolios_risk ON portfolios(risk_level);
+
+FIELDS EXPLANATION:
+
+stocks: JSONB
+  - Core portfolio data
+  - Array of stock objects with allocation
+  - Example: [
+      {
+        "symbol": "HDFCBANK",
+        "name": "HDFC Bank Ltd",
+        "sector": "Banking",
+        "weight": 0.20,          // 20% of portfolio
+        "shares": 10,            // Number of shares
+        "price_at_creation": 1500.00,
+        "rationale": "Strong fundamentals, consistent performer"
+      },
+      {
+        "symbol": "TCS",
+        "name": "Tata Consultancy Services",
+        "sector": "IT Services",
+        "weight": 0.20,
+        "shares": 15,
+        "price_at_creation": 3500.00,
+        "rationale": "Market leader in IT services"
+      }
+    ]
+
+diversification_score: FLOAT (0-1)
+  - Measures how well portfolio is diversified
+  - Calculation: Based on sector distribution
+  - 1.0 = Perfect diversification across sectors
+  - 0.0 = All stocks in same sector
+  - Formula: 1 - HHI (Herfindahl-Hirschman Index)
+
+sector_distribution: JSONB
+  - Percentage allocation per sector
+  - Ensures not over-concentrated in one sector
+  - Example: {
+      "Banking": 0.40,      // 40% in banking
+      "IT Services": 0.30,  // 30% in IT
+      "FMCG": 0.20,         // 20% in FMCG
+      "Pharma": 0.10        // 10% in pharma
+    }
+
+
+3.3.5 TABLE: EDUCATIONAL_CONTENT
+--------------------------------------------------------------------------------
+
+Purpose: Store curated financial learning materials with embeddings
+
+CREATE TABLE educational_content (
+    -- Primary Identification
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    
+    -- Content Identification
+    title             VARCHAR(255) NOT NULL,
+    topic             VARCHAR(100) NOT NULL,
+                      -- Categories: 'stocks', 'mutual_funds', 'bonds', etc.
+    level             VARCHAR(20) DEFAULT 'beginner',
+                      -- 'beginner', 'intermediate', 'advanced'
+    
+    -- Content
+    content           TEXT NOT NULL,
+                      -- Full educational content
+    summary           TEXT,
+                      -- Brief summary for quick reference
+    keywords          TEXT[],
+                      -- Array of keywords for search
+    
+    -- Vector Embedding for Similarity Search
+    embedding         vector(1536),
+                      -- Enables "find similar content" queries
+    
+    -- Metadata
+    source            VARCHAR(100),
+                      -- 'angelone', 'sebi', 'nse', 'custom'
+    difficulty_score  INTEGER CHECK (difficulty_score BETWEEN 1 AND 10),
+    estimated_read_time INTEGER,
+                      -- Minutes to read
+    
+    -- Engagement Metrics
+    view_count        INTEGER DEFAULT 0,
+    helpful_count     INTEGER DEFAULT 0,
+    
+    -- Timestamps
+    created_at        TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at        TIMESTAMP WITH TIME ZONE
+);
+
+-- Indexes
+CREATE INDEX idx_edu_topic ON educational_content(topic, level);
+CREATE INDEX idx_edu_embedding ON educational_content 
+USING ivfflat (embedding vector_cosine_ops) WITH (lists = 50);
+
+EXAMPLE DATA (Angel One Glossary):
+
+INSERT INTO educational_content (title, topic, level, content, keywords)
+VALUES (
+  'What is P/E Ratio?',
+  'fundamental_analysis',
+  'beginner',
+  'The Price-to-Earnings (P/E) ratio is a valuation metric that compares...',
+  ARRAY['pe ratio', 'valuation', 'earnings', 'fundamental analysis']
+);
+
+
+3.4 VECTOR EMBEDDINGS ARCHITECTURE
+--------------------------------------------------------------------------------
+
+3.4.1 WHAT ARE VECTOR EMBEDDINGS?
+--------------------------------------------------------------------------------
+
+EMBEDDINGS transform text into mathematical vectors (arrays of numbers).
+
+Example:
+Text: "What is a mutual fund?"
+     ↓ (Embedding Model)
+Vector: [0.23, -0.15, 0.87, ..., 0.34]  // 1536 dimensions
+
+SIMILAR MEANINGS → SIMILAR VECTORS
+
+Text 1: "What is a mutual fund?"
+Vector 1: [0.23, -0.15, 0.87, ...]
+
+Text 2: "Explain mutual funds"
+Vector 2: [0.25, -0.14, 0.88, ...]  // Very close to Vector 1!
+
+Text 3: "What is the stock market?"
+Vector 3: [-0.65, 0.42, -0.21, ...]  // Very different from Vector 1
+
+DISTANCE CALCULATION:
+distance(Vector1, Vector2) = 0.05  // Very similar!
+distance(Vector1, Vector3) = 0.89  // Not similar
+
+
+3.4.2 EMBEDDING GENERATION PIPELINE
+--------------------------------------------------------------------------------
+
+PIPELINE FOR MESSAGE STORAGE:
+
+┌─────────────────────────────────────────────────┐
+│  Step 1: User sends message                     │
+│  Input: "What is compound interest?"            │
+└─────────────────────────────────────────────────┘
+                    ↓
+┌─────────────────────────────────────────────────┐
+│  Step 2: Generate embedding                     │
+│  Service: Google Gemini Embeddings API          │
+│  Model: models/embedding-001                    │
+│  Output: [0.12, -0.34, 0.56, ..., 0.78]        │
+│          (1536 dimensions)                      │
+└─────────────────────────────────────────────────┘
+                    ↓
+┌─────────────────────────────────────────────────┐
+│  Step 3: Store in database                      │
+│  INSERT INTO messages (                         │
+│    content = "What is compound interest?",      │
+│    embedding = [0.12, -0.34, 0.56, ..., 0.78]  │
+│  );                                             │
+└─────────────────────────────────────────────────┘
+
+
+PIPELINE FOR SEMANTIC SEARCH (RAG):
+
+┌─────────────────────────────────────────────────┐
+│  Step 1: User query                             │
+│  Input: "Tell me about interest compounding"    │
+└─────────────────────────────────────────────────┘
+                    ↓
+┌─────────────────────────────────────────────────┐
+│  Step 2: Generate query embedding               │
+│  Output: [0.15, -0.32, 0.58, ..., 0.76]        │
+│          (Very similar to stored message!)      │
+└─────────────────────────────────────────────────┘
+                    ↓
+┌─────────────────────────────────────────────────┐
+│  Step 3: Vector similarity search               │
+│  SQL:                                           │
+│  SELECT content,                                │
+│         embedding <-> query_embedding as dist   │
+│  FROM messages                                  │
+│  WHERE role = 'assistant'                       │
+│  ORDER BY dist                                  │
+│  LIMIT 5;                                       │
+└─────────────────────────────────────────────────┘
+                    ↓
+┌─────────────────────────────────────────────────┐
+│  Step 4: Retrieve similar past conversations    │
+│  Results:                                       │
+│  1. "What is compound interest?" (dist: 0.08)   │
+│  2. "How does interest work?" (dist: 0.15)      │
+│  3. "Simple vs compound interest" (dist: 0.22)  │
+└─────────────────────────────────────────────────┘
+                    ↓
+┌─────────────────────────────────────────────────┐
+│  Step 5: Use context in LLM prompt              │
+│  Prompt: "Based on these past discussions:      │
+│           [context], answer: Tell me about      │
+│           interest compounding"                 │
+└─────────────────────────────────────────────────┘
+
+
+3.4.3 PGVECTOR CONFIGURATION
+--------------------------------------------------------------------------------
+
+INSTALLATION:
+
+-- Enable PGVector extension
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- Verify installation
+SELECT * FROM pg_extension WHERE extname = 'vector';
+
+
+VECTOR INDEX TYPES:
+
+1. IVFFLAT (Inverted File with Flat Compression)
+   - Faster search, approximate results
+   - Good for 10K+ vectors
+   - Used in our system
+
+CREATE INDEX idx_messages_embedding 
+ON messages USING ivfflat (embedding vector_cosine_ops)
+WITH (lists = 100);
+   -- lists: Number of clusters (sqrt of total rows)
+   -- Tune based on data size
+
+
+2. HNSW (Hierarchical Navigable Small World) - Future
+   - Even faster, higher accuracy
+   - More memory usage
+   - For production scale
+
+CREATE INDEX idx_messages_embedding_hnsw
+ON messages USING hnsw (embedding vector_cosine_ops)
+WITH (m = 16, ef_construction = 64);
+
+
+DISTANCE OPERATORS:
+
+<-> : Cosine distance (we use this)
+     Best for normalized vectors
+     Range: 0 (identical) to 2 (opposite)
+
+<#> : Negative inner product
+     Fast for dot product similarity
+
+<=> : L2 distance (Euclidean)
+     Geometric distance in vector space
+
+
+EXAMPLE QUERY:
+
+-- Find 5 most similar past responses
+SELECT 
+    content,
+    created_at,
+    agent_used,
+    embedding <-> :query_embedding as similarity_score
+FROM messages
+WHERE role = 'assistant'
+  AND user_id = :user_id
+ORDER BY similarity_score
+LIMIT 5;
+
+-- :query_embedding is the vector of current user query
+
+
+3.5 DATA INTEGRITY AND CONSTRAINTS
+--------------------------------------------------------------------------------
+
+3.5.1 REFERENTIAL INTEGRITY
+--------------------------------------------------------------------------------
+
+CASCADE DELETE Rules:
+
+User deleted → Cascade delete:
+  ✓ All conversations
+  ✓ All messages
+  ✓ All portfolios
+  ✓ All learning progress
+
+Conversation deleted → Cascade delete:
+  ✓ All messages in that conversation
+
+Message deleted → Cascade delete:
+  ✓ Message feedback (if any)
+
+FOREIGN KEY CONSTRAINTS:
+
+ALTER TABLE conversations
+ADD CONSTRAINT fk_user
+FOREIGN KEY (user_id) REFERENCES users(id)
+ON DELETE CASCADE;
+
+ALTER TABLE messages
+ADD CONSTRAINT fk_conversation
+FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+ON DELETE CASCADE;
+
+
+3.5.2 CHECK CONSTRAINTS
+--------------------------------------------------------------------------------
+
+Ensure data validity at database level:
+
+-- User age must be 18-100
+ALTER TABLE users
+ADD CONSTRAINT valid_age
+CHECK (age >= 18 AND age <= 100);
+
+-- Risk level must be valid
+ALTER TABLE portfolios
+ADD CONSTRAINT valid_risk
+CHECK (risk_level IN ('low', 'medium', 'high'));
+
+-- Confidence score must be 0-1
+ALTER TABLE messages
+ADD CONSTRAINT valid_confidence
+CHECK (confidence_score >= 0 AND confidence_score <= 1);
+
+-- Sentiment must be -1 to 1
+ALTER TABLE conversations
+ADD CONSTRAINT valid_sentiment
+CHECK (sentiment >= -1 AND sentiment <= 1);
+
+
+3.5.3 UNIQUE CONSTRAINTS
+--------------------------------------------------------------------------------
+
+Prevent duplicates:
+
+-- Email must be unique
+ALTER TABLE users
+ADD CONSTRAINT unique_email UNIQUE (email);
+
+-- Username must be unique
+ALTER TABLE users
+ADD CONSTRAINT unique_username UNIQUE (username);
+
+-- One feedback per message
+ALTER TABLE message_feedback
+ADD CONSTRAINT unique_message_feedback UNIQUE (message_id);
+
+
+3.5.4 NOT NULL CONSTRAINTS
+--------------------------------------------------------------------------------
+
+Required fields:
+
+-- User must have email and password
+ALTER TABLE users
+ALTER COLUMN email SET NOT NULL,
+ALTER COLUMN hashed_password SET NOT NULL;
+
+-- Message must have content and role
+ALTER TABLE messages
+ALTER COLUMN content SET NOT NULL,
+ALTER COLUMN role SET NOT NULL;
+
+-- Portfolio must have stocks
+ALTER TABLE portfolios
+ALTER COLUMN stocks SET NOT NULL;
+
+
+3.5.5 DEFAULT VALUES
+--------------------------------------------------------------------------------
+
+Sensible defaults for optional fields:
+
+-- New users are beginners by default
+ALTER TABLE users
+ALTER COLUMN user_type SET DEFAULT 'beginner',
+ALTER COLUMN risk_tolerance SET DEFAULT 'moderate';
+
+-- Conversations start with 0 messages
+ALTER TABLE conversations
+ALTER COLUMN total_messages SET DEFAULT 0;
+
+-- Messages default to text input
+ALTER TABLE messages
+ALTER COLUMN input_type SET DEFAULT 'text';
+
+
+================================================================================
+                    4. CORE COMPONENTS DESIGN
+================================================================================
+
+4.1 QUERY ROUTER AGENT
+--------------------------------------------------------------------------------
+
+PURPOSE: Understand user intent and route to appropriate specialist agent
+
+RESPONSIBILITY: "Traffic Controller of the System"
+
+The Query Router is the FIRST agent that processes every user query.
+Its job is to understand WHAT the user wants and WHO should handle it.
+

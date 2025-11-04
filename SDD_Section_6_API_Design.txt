@@ -1,0 +1,1118 @@
+================================================================================
+                    SYSTEM DESIGN DOCUMENT - SECTION 6
+                            API DESIGN
+================================================================================
+
+6. API DESIGN
+--------------------------------------------------------------------------------
+
+PURPOSE: RESTful API interface specification
+
+This section documents all API endpoints, request/response formats, 
+authentication mechanisms, and error handling strategies.
+
+
+6.1 API ARCHITECTURE OVERVIEW
+--------------------------------------------------------------------------------
+
+API DESIGN PRINCIPLES:
+
+1. RESTful Architecture
+   - Resource-based URLs
+   - Standard HTTP methods (GET, POST, PUT, DELETE)
+   - Stateless communication
+   - JSON request/response format
+
+2. Authentication
+   - JWT (JSON Web Tokens) for session management
+   - Bearer token in Authorization header
+   - Token expiration: 24 hours
+   - Refresh token mechanism
+
+3. Versioning
+   - URL-based versioning: /api/v1/...
+   - Backward compatibility maintained
+   - Deprecated endpoints clearly marked
+
+4. Rate Limiting
+   - 100 requests per minute per user
+   - 1000 requests per hour per user
+   - Burst allowance: 10 requests/second
+
+5. Error Handling
+   - Consistent error response format
+   - HTTP status codes follow RFC standards
+   - Detailed error messages for debugging
+
+
+API BASE URL:
+
+Production:  https://finmentor.ai/api/v1
+Development: http://localhost:8000/api/v1
+
+
+TECHNOLOGY STACK:
+
+Framework: FastAPI 0.104.1
+  - Async/await support for high concurrency
+  - Automatic OpenAPI documentation
+  - Built-in request validation
+  - Type hints with Pydantic
+
+Authentication: JWT (PyJWT)
+  - HS256 algorithm
+  - Secret key rotation support
+  - Token blacklisting for logout
+
+Validation: Pydantic v2
+  - Automatic request validation
+  - Type safety
+  - Custom validators
+
+
+6.2 AUTHENTICATION & AUTHORIZATION
+--------------------------------------------------------------------------------
+
+6.2.1 USER REGISTRATION
+┌──────────────────────────────────────────────────────────────┐
+│  ENDPOINT: POST /api/v1/auth/register                        │
+├──────────────────────────────────────────────────────────────┤
+│  Description: Create new user account                        │
+│  Authentication: None (public endpoint)                      │
+│  Rate Limit: 5 registrations per IP per hour                 │
+└──────────────────────────────────────────────────────────────┘
+
+REQUEST BODY:
+{
+  "email": "user@example.com",
+  "password": "SecurePassword123!",
+  "full_name": "John Doe",
+  "phone_number": "+1234567890",  // Optional
+  "date_of_birth": "1990-01-15",  // Optional
+  "risk_tolerance": "moderate"     // Optional: low, moderate, high
+}
+
+VALIDATION RULES:
+- email: Valid email format, unique in database
+- password: Minimum 8 characters, at least 1 uppercase, 1 lowercase, 1 digit
+- full_name: 2-100 characters
+- phone_number: Valid international format (E.164)
+- date_of_birth: Must be 18+ years old
+- risk_tolerance: Enum ["low", "moderate", "high"]
+
+SUCCESS RESPONSE (201 Created):
+{
+  "status": "success",
+  "data": {
+    "user_id": "550e8400-e29b-41d4-a716-446655440000",
+    "email": "user@example.com",
+    "full_name": "John Doe",
+    "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "token_type": "bearer",
+    "expires_in": 86400  // 24 hours in seconds
+  }
+}
+
+ERROR RESPONSES:
+
+400 Bad Request - Invalid input:
+{
+  "status": "error",
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Invalid request data",
+    "details": [
+      {
+        "field": "password",
+        "message": "Password must be at least 8 characters"
+      }
+    ]
+  }
+}
+
+409 Conflict - Email already exists:
+{
+  "status": "error",
+  "error": {
+    "code": "EMAIL_EXISTS",
+    "message": "User with this email already exists"
+  }
+}
+
+IMPLEMENTATION PSEUDOCODE:
+
+async def register_user(user_data: UserRegistration, db: AsyncSession):
+    # Step 1: Validate input (automatic via Pydantic)
+    
+    # Step 2: Check if email exists
+    existing_user = await db.execute(
+        select(User).where(User.email == user_data.email)
+    )
+    if existing_user.scalar_one_or_none():
+        raise HTTPException(
+            status_code=409, 
+            detail="EMAIL_EXISTS"
+        )
+    
+    # Step 3: Hash password (bcrypt, cost=12)
+    password_hash = bcrypt.hashpw(
+        user_data.password.encode(), 
+        bcrypt.gensalt(rounds=12)
+    )
+    
+    # Step 4: Create user record
+    user = User(
+        id=uuid.uuid4(),
+        email=user_data.email,
+        password_hash=password_hash,
+        full_name=user_data.full_name,
+        created_at=datetime.utcnow()
+    )
+    
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    
+    # Step 5: Generate JWT tokens
+    access_token = create_jwt_token(
+        user_id=user.id, 
+        token_type="access", 
+        expires_delta=timedelta(hours=24)
+    )
+    
+    refresh_token = create_jwt_token(
+        user_id=user.id, 
+        token_type="refresh", 
+        expires_delta=timedelta(days=30)
+    )
+    
+    # Step 6: Return tokens
+    return {
+        "user_id": user.id,
+        "email": user.email,
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "expires_in": 86400
+    }
+
+
+6.2.2 USER LOGIN
+┌──────────────────────────────────────────────────────────────┐
+│  ENDPOINT: POST /api/v1/auth/login                           │
+├──────────────────────────────────────────────────────────────┤
+│  Description: Authenticate user and issue tokens             │
+│  Authentication: None (public endpoint)                      │
+│  Rate Limit: 10 attempts per IP per 5 minutes                │
+└──────────────────────────────────────────────────────────────┘
+
+REQUEST BODY:
+{
+  "email": "user@example.com",
+  "password": "SecurePassword123!"
+}
+
+SUCCESS RESPONSE (200 OK):
+{
+  "status": "success",
+  "data": {
+    "user_id": "550e8400-e29b-41d4-a716-446655440000",
+    "email": "user@example.com",
+    "full_name": "John Doe",
+    "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "token_type": "bearer",
+    "expires_in": 86400
+  }
+}
+
+ERROR RESPONSES:
+
+401 Unauthorized - Invalid credentials:
+{
+  "status": "error",
+  "error": {
+    "code": "INVALID_CREDENTIALS",
+    "message": "Invalid email or password"
+  }
+}
+
+429 Too Many Requests - Rate limit exceeded:
+{
+  "status": "error",
+  "error": {
+    "code": "RATE_LIMIT_EXCEEDED",
+    "message": "Too many login attempts. Try again in 5 minutes.",
+    "retry_after": 300  // seconds
+  }
+}
+
+
+6.2.3 TOKEN REFRESH
+┌──────────────────────────────────────────────────────────────┐
+│  ENDPOINT: POST /api/v1/auth/refresh                         │
+├──────────────────────────────────────────────────────────────┤
+│  Description: Get new access token using refresh token       │
+│  Authentication: Refresh token required                      │
+└──────────────────────────────────────────────────────────────┘
+
+REQUEST BODY:
+{
+  "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+
+SUCCESS RESPONSE (200 OK):
+{
+  "status": "success",
+  "data": {
+    "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "token_type": "bearer",
+    "expires_in": 86400
+  }
+}
+
+
+6.2.4 JWT TOKEN STRUCTURE
+┌──────────────────────────────────────────────────────────────┐
+│  JWT PAYLOAD STRUCTURE                                       │
+└──────────────────────────────────────────────────────────────┘
+
+ACCESS TOKEN PAYLOAD:
+{
+  "sub": "550e8400-e29b-41d4-a716-446655440000",  // user_id
+  "email": "user@example.com",
+  "token_type": "access",
+  "iat": 1730304000,  // Issued at (Unix timestamp)
+  "exp": 1730390400,  // Expires at (Unix timestamp)
+  "jti": "unique-token-id"  // JWT ID for revocation
+}
+
+REFRESH TOKEN PAYLOAD:
+{
+  "sub": "550e8400-e29b-41d4-a716-446655440000",
+  "token_type": "refresh",
+  "iat": 1730304000,
+  "exp": 1732896000,  // 30 days
+  "jti": "unique-refresh-token-id"
+}
+
+SECURITY MEASURES:
+- Tokens signed with HS256 algorithm
+- Secret key: 256-bit random string (env variable)
+- Token ID (jti) stored for revocation on logout
+- Expired tokens automatically rejected
+
+
+6.2.5 PROTECTED ROUTE AUTHENTICATION
+┌──────────────────────────────────────────────────────────────┐
+│  AUTHENTICATION FLOW FOR PROTECTED ENDPOINTS                 │
+└──────────────────────────────────────────────────────────────┘
+
+REQUEST HEADER:
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+
+AUTHENTICATION DEPENDENCY (FastAPI):
+
+async def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db)
+) -> User:
+    """Validate JWT and return current user"""
+    
+    try:
+        # Step 1: Decode JWT
+        payload = jwt.decode(
+            token, 
+            settings.SECRET_KEY, 
+            algorithms=["HS256"]
+        )
+        
+        user_id: str = payload.get("sub")
+        token_type: str = payload.get("token_type")
+        
+        if not user_id or token_type != "access":
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid authentication token"
+            )
+        
+        # Step 2: Check token revocation (logout)
+        jti = payload.get("jti")
+        is_revoked = await check_token_revocation(jti, db)
+        if is_revoked:
+            raise HTTPException(
+                status_code=401,
+                detail="Token has been revoked"
+            )
+        
+        # Step 3: Fetch user from database
+        result = await db.execute(
+            select(User).where(User.id == user_id)
+        )
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            raise HTTPException(
+                status_code=401,
+                detail="User not found"
+            )
+        
+        return user
+        
+    except JWTError:
+        raise HTTPException(
+            status_code=401,
+            detail="Could not validate credentials"
+        )
+
+USAGE IN ROUTE:
+
+@router.get("/api/v1/profile")
+async def get_profile(
+    current_user: User = Depends(get_current_user)
+):
+    return {
+        "user_id": current_user.id,
+        "email": current_user.email,
+        "full_name": current_user.full_name
+    }
+
+
+6.3 CONVERSATION MANAGEMENT API
+--------------------------------------------------------------------------------
+
+6.3.1 CREATE CONVERSATION
+┌──────────────────────────────────────────────────────────────┐
+│  ENDPOINT: POST /api/v1/conversations                        │
+├──────────────────────────────────────────────────────────────┤
+│  Description: Start a new conversation                       │
+│  Authentication: Required (JWT)                              │
+└──────────────────────────────────────────────────────────────┘
+
+REQUEST BODY:
+{
+  "title": "Investment Planning Discussion",  // Optional
+  "initial_context": {                        // Optional
+    "risk_tolerance": "moderate",
+    "investment_goal": "retirement"
+  }
+}
+
+SUCCESS RESPONSE (201 Created):
+{
+  "status": "success",
+  "data": {
+    "conversation_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+    "user_id": "550e8400-e29b-41d4-a716-446655440000",
+    "title": "Investment Planning Discussion",
+    "total_messages": 0,
+    "created_at": "2025-10-30T10:30:00Z"
+  }
+}
+
+
+6.3.2 LIST CONVERSATIONS
+┌──────────────────────────────────────────────────────────────┐
+│  ENDPOINT: GET /api/v1/conversations                         │
+├──────────────────────────────────────────────────────────────┤
+│  Description: Get all conversations for current user         │
+│  Authentication: Required (JWT)                              │
+└──────────────────────────────────────────────────────────────┘
+
+QUERY PARAMETERS:
+- page: int (default: 1)
+- page_size: int (default: 20, max: 100)
+- sort_by: str (options: "created_at", "last_message_at")
+- order: str (options: "asc", "desc", default: "desc")
+
+EXAMPLE REQUEST:
+GET /api/v1/conversations?page=1&page_size=10&sort_by=last_message_at&order=desc
+
+SUCCESS RESPONSE (200 OK):
+{
+  "status": "success",
+  "data": {
+    "conversations": [
+      {
+        "conversation_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "title": "Investment Planning Discussion",
+        "total_messages": 15,
+        "last_message_at": "2025-10-30T14:20:00Z",
+        "created_at": "2025-10-30T10:30:00Z",
+        "preview": "What are the best stocks for long-term growth?"
+      },
+      // ... more conversations
+    ],
+    "pagination": {
+      "page": 1,
+      "page_size": 10,
+      "total_conversations": 45,
+      "total_pages": 5
+    }
+  }
+}
+
+
+6.3.3 GET CONVERSATION HISTORY
+┌──────────────────────────────────────────────────────────────┐
+│  ENDPOINT: GET /api/v1/conversations/{conversation_id}       │
+├──────────────────────────────────────────────────────────────┤
+│  Description: Get all messages in a conversation             │
+│  Authentication: Required (JWT)                              │
+└──────────────────────────────────────────────────────────────┘
+
+QUERY PARAMETERS:
+- page: int (default: 1)
+- page_size: int (default: 50, max: 200)
+
+EXAMPLE REQUEST:
+GET /api/v1/conversations/7c9e6679-7425-40de-944b-e07fc1f90ae7?page=1&page_size=50
+
+SUCCESS RESPONSE (200 OK):
+{
+  "status": "success",
+  "data": {
+    "conversation_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+    "title": "Investment Planning Discussion",
+    "messages": [
+      {
+        "message_id": "msg-001",
+        "role": "user",
+        "content": "What is a mutual fund?",
+        "created_at": "2025-10-30T10:31:00Z"
+      },
+      {
+        "message_id": "msg-002",
+        "role": "assistant",
+        "content": "A mutual fund is an investment vehicle...",
+        "agent_used": "educational_agent",
+        "confidence_score": 0.95,
+        "processing_time": 3500,  // milliseconds
+        "sources": [
+          {
+            "title": "Mutual Funds - Definition",
+            "relevance": 0.92
+          }
+        ],
+        "created_at": "2025-10-30T10:31:04Z"
+      },
+      // ... more messages
+    ],
+    "pagination": {
+      "page": 1,
+      "page_size": 50,
+      "total_messages": 15
+    }
+  }
+}
+
+
+6.4 CHAT API (CORE FUNCTIONALITY)
+--------------------------------------------------------------------------------
+
+6.4.1 SEND MESSAGE
+┌──────────────────────────────────────────────────────────────┐
+│  ENDPOINT: POST /api/v1/chat/message                         │
+├──────────────────────────────────────────────────────────────┤
+│  Description: Send message and get AI response               │
+│  Authentication: Required (JWT)                              │
+│  This is the MAIN endpoint for user interaction              │
+└──────────────────────────────────────────────────────────────┘
+
+REQUEST BODY:
+{
+  "conversation_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "message": "Should I invest in Apple stock?",
+  "context": {  // Optional
+    "user_portfolio": {
+      "current_holdings": ["MSFT", "GOOGL"],
+      "total_value": 50000
+    }
+  }
+}
+
+SUCCESS RESPONSE (200 OK):
+{
+  "status": "success",
+  "data": {
+    "message_id": "msg-123",
+    "conversation_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+    "user_message": {
+      "message_id": "msg-122",
+      "content": "Should I invest in Apple stock?",
+      "created_at": "2025-10-30T14:30:00Z"
+    },
+    "assistant_response": {
+      "message_id": "msg-123",
+      "content": "Based on current market analysis, Apple (AAPL)...",
+      "agent_used": "market_data_agent",
+      "confidence_score": 0.88,
+      "processing_time": 4200,
+      "created_at": "2025-10-30T14:30:04Z",
+      
+      // Structured data (if applicable)
+      "structured_data": {
+        "stock_data": {
+          "symbol": "AAPL",
+          "current_price": 150.25,
+          "pe_ratio": 28.5,
+          "dividend_yield": 0.51,
+          "analyst_rating": "Buy",
+          "price_target": 165.00
+        },
+        "recommendation": {
+          "action": "BUY",
+          "confidence": "MODERATE",
+          "reasoning": [
+            "Strong fundamentals",
+            "Positive momentum",
+            "Diversification benefit"
+          ]
+        }
+      },
+      
+      // Sources used
+      "sources": [
+        {
+          "type": "real_time_data",
+          "provider": "Yahoo Finance",
+          "timestamp": "2025-10-30T14:29:58Z"
+        },
+        {
+          "type": "educational_content",
+          "title": "Stock Valuation Metrics",
+          "relevance": 0.85
+        }
+      ],
+      
+      // Agent execution metadata
+      "execution_details": {
+        "agents_involved": [
+          {
+            "agent": "query_router",
+            "time_ms": 200,
+            "intent": "PERSONALIZED_ADVICE"
+          },
+          {
+            "agent": "market_data_agent",
+            "time_ms": 2500,
+            "data_fetched": true
+          },
+          {
+            "agent": "educational_agent",
+            "time_ms": 1500,
+            "context_provided": true
+          }
+        ],
+        "rag_retrieval": {
+          "documents_retrieved": 5,
+          "retrieval_time_ms": 500,
+          "avg_relevance": 0.82
+        },
+        "llm_generation": {
+          "model": "gemini-1.5-flash",
+          "tokens_input": 1200,
+          "tokens_output": 450,
+          "generation_time_ms": 2800
+        }
+      }
+    }
+  }
+}
+
+ERROR RESPONSES:
+
+400 Bad Request - Empty message:
+{
+  "status": "error",
+  "error": {
+    "code": "EMPTY_MESSAGE",
+    "message": "Message content cannot be empty"
+  }
+}
+
+404 Not Found - Conversation not found:
+{
+  "status": "error",
+  "error": {
+    "code": "CONVERSATION_NOT_FOUND",
+    "message": "Conversation with given ID does not exist"
+  }
+}
+
+500 Internal Server Error - Processing failed:
+{
+  "status": "error",
+  "error": {
+    "code": "PROCESSING_ERROR",
+    "message": "Failed to process your message",
+    "retry_available": true,
+    "support_id": "err-550e8400"  // For debugging
+  }
+}
+
+
+IMPLEMENTATION FLOW:
+
+async def send_message(
+    request: ChatRequest,
+    db: AsyncSession,
+    current_user: User
+):
+    # Step 1: Validate conversation ownership
+    conversation = await validate_conversation(
+        request.conversation_id, 
+        current_user.id, 
+        db
+    )
+    
+    # Step 2: Store user message
+    user_message = await store_message(
+        conversation_id=request.conversation_id,
+        user_id=current_user.id,
+        role="user",
+        content=request.message,
+        db=db
+    )
+    
+    # Step 3: Get conversation history (last 10 messages)
+    history = await get_conversation_history(
+        request.conversation_id, 
+        limit=10, 
+        db=db
+    )
+    
+    # Step 4: Process with multi-agent system
+    orchestrator = MultiAgentOrchestrator()
+    response = await orchestrator.process_query(
+        user_query=request.message,
+        conversation_history=history,
+        user_context=request.context or {}
+    )
+    
+    # Step 5: Store AI response
+    ai_message = await store_message(
+        conversation_id=request.conversation_id,
+        user_id=current_user.id,
+        role="assistant",
+        content=response.content,
+        metadata={
+            "agent_used": response.agent_used,
+            "confidence_score": response.confidence,
+            "processing_time": response.processing_time,
+            "structured_data": response.structured_data,
+            "sources": response.sources,
+            "execution_details": response.execution_details
+        },
+        db=db
+    )
+    
+    # Step 6: Return response
+    return {
+        "user_message": user_message,
+        "assistant_response": ai_message
+    }
+
+
+6.4.2 STREAMING RESPONSE (WebSocket)
+┌──────────────────────────────────────────────────────────────┐
+│  ENDPOINT: WS /api/v1/chat/stream                            │
+├──────────────────────────────────────────────────────────────┤
+│  Description: Real-time streaming chat (word-by-word)        │
+│  Authentication: JWT token via query param or handshake      │
+│  Protocol: WebSocket                                         │
+└──────────────────────────────────────────────────────────────┘
+
+CONNECTION:
+ws://localhost:8000/api/v1/chat/stream?token=eyJhbGciOiJIUzI1NiIs...
+
+CLIENT SENDS (JSON):
+{
+  "type": "message",
+  "conversation_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "content": "What is compound interest?"
+}
+
+SERVER STREAMS (Multiple JSON messages):
+
+// 1. Acknowledgment
+{
+  "type": "ack",
+  "message_id": "msg-124",
+  "timestamp": "2025-10-30T14:35:00Z"
+}
+
+// 2. Processing status
+{
+  "type": "status",
+  "stage": "routing",
+  "message": "Analyzing your question..."
+}
+
+{
+  "type": "status",
+  "stage": "retrieval",
+  "message": "Retrieving relevant information..."
+}
+
+{
+  "type": "status",
+  "stage": "generation",
+  "message": "Generating response..."
+}
+
+// 3. Streaming content (word-by-word)
+{
+  "type": "content_chunk",
+  "content": "Compound"
+}
+
+{
+  "type": "content_chunk",
+  "content": " interest"
+}
+
+{
+  "type": "content_chunk",
+  "content": " is"
+}
+
+// ... continues until complete response
+
+// 4. Final completion
+{
+  "type": "complete",
+  "message_id": "msg-125",
+  "full_content": "Compound interest is...",
+  "agent_used": "educational_agent",
+  "processing_time": 3500,
+  "sources": [...]
+}
+
+BENEFITS OF WEBSOCKET:
+- Real-time user feedback (better UX)
+- Lower latency for interactive conversations
+- Efficient for multiple rapid messages
+- Bidirectional communication
+
+
+6.5 PORTFOLIO MANAGEMENT API
+--------------------------------------------------------------------------------
+
+6.5.1 GENERATE PORTFOLIO
+┌──────────────────────────────────────────────────────────────┐
+│  ENDPOINT: POST /api/v1/portfolios/generate                  │
+├──────────────────────────────────────────────────────────────┤
+│  Description: Generate personalized stock portfolio          │
+│  Authentication: Required (JWT)                              │
+└──────────────────────────────────────────────────────────────┘
+
+REQUEST BODY:
+{
+  "risk_level": "moderate",  // low, moderate, high
+  "investment_amount": 10000,
+  "investment_horizon": "long_term",  // short_term, medium_term, long_term
+  "preferences": {  // Optional
+    "sectors": ["technology", "healthcare"],  // Preferred sectors
+    "exclude_sectors": ["energy"],            // Avoid sectors
+    "min_dividend_yield": 2.0,                // Minimum dividend %
+    "esg_focus": true                         // ESG investing
+  }
+}
+
+SUCCESS RESPONSE (200 OK):
+{
+  "status": "success",
+  "data": {
+    "portfolio_id": "pf-550e8400",
+    "risk_level": "moderate",
+    "total_investment": 10000,
+    "stocks": [
+      {
+        "symbol": "AAPL",
+        "company_name": "Apple Inc.",
+        "allocation_percentage": 15.0,
+        "allocation_amount": 1500.00,
+        "shares": 10,
+        "current_price": 150.25,
+        "sector": "Technology",
+        "rationale": "Strong fundamentals, market leader"
+      },
+      {
+        "symbol": "MSFT",
+        "company_name": "Microsoft Corporation",
+        "allocation_percentage": 12.0,
+        "allocation_amount": 1200.00,
+        "shares": 3,
+        "current_price": 380.50,
+        "sector": "Technology",
+        "rationale": "Cloud growth, AI investments"
+      },
+      // ... 8-12 more stocks
+    ],
+    "sector_distribution": {
+      "Technology": 35.0,
+      "Healthcare": 25.0,
+      "Financial": 20.0,
+      "Consumer": 15.0,
+      "Industrial": 5.0
+    },
+    "metrics": {
+      "expected_annual_return": 10.5,  // %
+      "volatility": 15.2,               // Standard deviation
+      "sharpe_ratio": 0.69,
+      "max_drawdown": -18.5,            // Worst historical loss %
+      "dividend_yield": 2.3,            // Average yield
+      "diversification_score": 0.82     // 0-1 scale
+    },
+    "created_at": "2025-10-30T14:40:00Z"
+  }
+}
+
+
+6.5.2 GET USER PORTFOLIOS
+┌──────────────────────────────────────────────────────────────┐
+│  ENDPOINT: GET /api/v1/portfolios                            │
+├──────────────────────────────────────────────────────────────┤
+│  Description: List all portfolios created by user            │
+│  Authentication: Required (JWT)                              │
+└──────────────────────────────────────────────────────────────┘
+
+QUERY PARAMETERS:
+- page: int (default: 1)
+- page_size: int (default: 10)
+
+SUCCESS RESPONSE (200 OK):
+{
+  "status": "success",
+  "data": {
+    "portfolios": [
+      {
+        "portfolio_id": "pf-550e8400",
+        "risk_level": "moderate",
+        "total_stocks": 12,
+        "total_investment": 10000,
+        "expected_return": 10.5,
+        "created_at": "2025-10-30T14:40:00Z"
+      },
+      // ... more portfolios
+    ],
+    "pagination": {
+      "page": 1,
+      "page_size": 10,
+      "total_portfolios": 3
+    }
+  }
+}
+
+
+6.6 ERROR HANDLING & STATUS CODES
+--------------------------------------------------------------------------------
+
+STANDARD HTTP STATUS CODES:
+
+┌─────────┬───────────────────────────────────────────────────┐
+│  Code   │  Meaning & Usage                                  │
+├─────────┼───────────────────────────────────────────────────┤
+│  200    │  OK - Request successful                          │
+│  201    │  Created - Resource created successfully          │
+│  204    │  No Content - Success with no response body       │
+│  400    │  Bad Request - Invalid input/validation error     │
+│  401    │  Unauthorized - Missing or invalid token          │
+│  403    │  Forbidden - Valid token but insufficient perms   │
+│  404    │  Not Found - Resource doesn't exist              │
+│  409    │  Conflict - Resource already exists               │
+│  422    │  Unprocessable Entity - Semantic validation error │
+│  429    │  Too Many Requests - Rate limit exceeded          │
+│  500    │  Internal Server Error - Unexpected server error  │
+│  503    │  Service Unavailable - Temporary unavailable      │
+└─────────┴───────────────────────────────────────────────────┘
+
+ERROR RESPONSE FORMAT (Consistent across all endpoints):
+
+{
+  "status": "error",
+  "error": {
+    "code": "ERROR_CODE",           // Machine-readable code
+    "message": "Human-readable error message",
+    "details": [...],               // Optional: field-level errors
+    "retry_available": true,        // Optional: can retry?
+    "support_id": "err-550e8400"    // Optional: for support
+  }
+}
+
+
+COMMON ERROR CODES:
+
+Authentication/Authorization:
+- INVALID_CREDENTIALS: Wrong email/password
+- INVALID_TOKEN: Malformed or expired JWT
+- TOKEN_REVOKED: Logged out token
+- INSUFFICIENT_PERMISSIONS: Not allowed
+
+Validation:
+- VALIDATION_ERROR: Input validation failed
+- MISSING_FIELD: Required field not provided
+- INVALID_FORMAT: Wrong data format
+
+Resource:
+- RESOURCE_NOT_FOUND: Requested resource doesn't exist
+- RESOURCE_EXISTS: Duplicate resource
+- RESOURCE_DELETED: Accessing deleted resource
+
+Processing:
+- PROCESSING_ERROR: Failed to process request
+- EXTERNAL_API_ERROR: Third-party API failed
+- DATABASE_ERROR: Database operation failed
+
+Rate Limiting:
+- RATE_LIMIT_EXCEEDED: Too many requests
+
+
+--- DIAGRAM 6.1: API REQUEST FLOW ---
+
+[MERMAID CODE - Copy this to Mermaid Live Editor]
+
+sequenceDiagram
+    participant Client
+    participant FastAPI
+    participant Auth as Auth Middleware
+    participant Handler as Route Handler
+    participant Orchestrator
+    participant DB as PostgreSQL
+    participant External as External APIs
+    
+    Client->>FastAPI: POST /api/v1/chat/message
+    Note over Client,FastAPI: Authorization: Bearer <token>
+    
+    FastAPI->>Auth: Validate JWT Token
+    
+    alt Invalid Token
+        Auth-->>Client: 401 Unauthorized
+    else Valid Token
+        Auth->>Handler: Request + User Object
+        
+        Handler->>DB: Get Conversation
+        
+        alt Conversation Not Found
+            DB-->>Handler: null
+            Handler-->>Client: 404 Not Found
+        else Conversation Found
+            DB-->>Handler: Conversation
+            
+            Handler->>DB: Store User Message
+            DB-->>Handler: Message Stored
+            
+            Handler->>Orchestrator: Process Query
+            
+            Orchestrator->>DB: RAG Retrieval
+            DB-->>Orchestrator: Relevant Context
+            
+            Orchestrator->>External: Fetch Market Data
+            External-->>Orchestrator: Stock Data
+            
+            Orchestrator->>Orchestrator: Multi-Agent Processing
+            
+            Orchestrator-->>Handler: AI Response
+            
+            Handler->>DB: Store AI Message
+            DB-->>Handler: Message Stored
+            
+            Handler-->>Client: 200 OK + Response
+        end
+    end
+
+[END MERMAID CODE]
+
+
+--- DIAGRAM 6.2: AUTHENTICATION FLOW ---
+
+[MERMAID CODE - Copy this to Mermaid Live Editor]
+
+graph TD
+    START[Client Request] --> HAS_TOKEN{Has Auth Header?}
+    
+    HAS_TOKEN -->|No| UNAUTH[401 Unauthorized]
+    HAS_TOKEN -->|Yes| EXTRACT[Extract Token]
+    
+    EXTRACT --> DECODE{Decode JWT}
+    
+    DECODE -->|Invalid| UNAUTH
+    DECODE -->|Valid| CHECK_TYPE{Token Type?}
+    
+    CHECK_TYPE -->|Not 'access'| UNAUTH
+    CHECK_TYPE -->|'access'| CHECK_EXP{Expired?}
+    
+    CHECK_EXP -->|Yes| UNAUTH
+    CHECK_EXP -->|No| CHECK_REVOKE{Revoked?}
+    
+    CHECK_REVOKE -->|Yes| UNAUTH
+    CHECK_REVOKE -->|No| FETCH_USER[Fetch User from DB]
+    
+    FETCH_USER --> USER_EXISTS{User Exists?}
+    
+    USER_EXISTS -->|No| UNAUTH
+    USER_EXISTS -->|Yes| ALLOW[Allow Request]
+    
+    ALLOW --> HANDLER[Route Handler]
+    
+    style UNAUTH fill:#E74C3C
+    style ALLOW fill:#2ECC71
+    style HANDLER fill:#3498DB
+
+[END MERMAID CODE]
+
+
+================================================================================
+
+SUMMARY: SECTION 6 - API DESIGN
+================================================================================
+
+6.1 API Architecture Overview
+- RESTful design principles
+- JWT authentication with 24-hour expiration
+- Rate limiting: 100/min, 1000/hour
+- FastAPI framework with Pydantic validation
+
+6.2 Authentication & Authorization
+- User registration with validation
+- Login with JWT token issuance
+- Token refresh mechanism
+- JWT structure and security measures
+- Protected route authentication flow
+
+6.3 Conversation Management API
+- Create new conversation
+- List all conversations with pagination
+- Get conversation history with messages
+
+6.4 Chat API (Core)
+- Send message endpoint (main functionality)
+- Detailed response structure with metadata
+- Streaming via WebSocket for real-time interaction
+- Complete implementation flow
+
+6.5 Portfolio Management API
+- Generate personalized portfolio
+- List user portfolios
+- Detailed portfolio structure with metrics
+
+6.6 Error Handling
+- Standard HTTP status codes
+- Consistent error response format
+- Common error codes catalog
+- 2 Mermaid diagrams (API flow, Auth flow)
+
+================================================================================
+
+SECTION 6 - COMPLETE! ✅
+
+Next sections:
+- Section 7: Key Algorithms
+- Section 8: External Integrations
+- Section 9: Security & Privacy
+- Section 10: Technology Justification
+- Section 11: Future Enhancements
+
+Continue with Section 7?

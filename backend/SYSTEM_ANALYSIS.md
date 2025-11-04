@@ -6,7 +6,7 @@
 ```
 User Request → Chat Endpoint → Process Input (Text/Voice/Image/Document)
 ```
-
+        
 ### 2. **Context Retrieval** (`services/agentic_rag.py`)
 ```
 Query → Intent Classification → Retrieval Strategy → PGVector Search → Context

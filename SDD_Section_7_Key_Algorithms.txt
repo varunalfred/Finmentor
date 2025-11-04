@@ -1,0 +1,1103 @@
+================================================================================
+                    SYSTEM DESIGN DOCUMENT - SECTION 7
+                          KEY ALGORITHMS
+================================================================================
+
+7. KEY ALGORITHMS
+--------------------------------------------------------------------------------
+
+PURPOSE: Detailed algorithmic designs for core system operations
+
+This section documents the key algorithms that power FinMentor AI, including
+complexity assessment, portfolio generation, risk calculation, and RAG retrieval.
+
+
+7.1 QUERY COMPLEXITY ASSESSMENT ALGORITHM
+--------------------------------------------------------------------------------
+
+PURPOSE: Determine query complexity to route to appropriate orchestration mode
+
+COMPLEXITY LEVELS:
+- SIMPLE: Single-agent, direct response (e.g., definitions)
+- MODERATE: Single-agent with RAG retrieval
+- COMPLEX: Multi-agent parallel execution
+- CRITICAL: Sequential multi-agent with self-reflection
+
+ALGORITHM:
+
+FUNCTION assess_query_complexity(
+    user_query: str,
+    conversation_history: list,
+    intent: str
+) -> ComplexityLevel:
+    
+    # Initialize scoring system
+    complexity_score = 0
+    
+    # RULE 1: Intent-based base scoring
+    intent_scores = {
+        "FACTUAL_QUESTION": 1,        # Simple fact lookup
+        "CONCEPT_EXPLANATION": 2,     # Requires educational content
+        "COMPARISON_REQUEST": 3,      # Multiple data points
+        "PERSONALIZED_ADVICE": 4,     # Requires context + analysis
+        "CRITICAL_DECISION": 5        # High-stakes, multi-faceted
+    }
+    complexity_score += intent_scores.get(intent, 2)
+    
+    # RULE 2: Query length analysis
+    word_count = len(user_query.split())
+    
+    IF word_count < 5:
+        complexity_score += 0  # Simple query
+    ELIF word_count < 15:
+        complexity_score += 1  # Moderate query
+    ELSE:
+        complexity_score += 2  # Complex query
+    
+    # RULE 3: Multiple questions detection
+    question_markers = count_occurrences(
+        user_query, 
+        ["?", "and", "also", "what about", "how about"]
+    )
+    
+    IF question_markers >= 3:
+        complexity_score += 2  # Multiple sub-queries
+    ELIF question_markers >= 2:
+        complexity_score += 1
+    
+    # RULE 4: Financial entity detection
+    entities = extract_financial_entities(user_query)
+    # Entities: stock symbols, company names, financial products
+    
+    IF len(entities) == 0:
+        complexity_score += 0  # No specific entities
+    ELIF len(entities) == 1:
+        complexity_score += 1  # Single entity
+    ELSE:
+        complexity_score += 2  # Comparison/multi-entity
+    
+    # RULE 5: Contextual dependency
+    IF conversation_history is empty:
+        complexity_score += 0  # No context needed
+    ELSE:
+        # Check if query references previous messages
+        has_references = contains_references(
+            user_query, 
+            ["it", "that", "they", "what about", "also"]
+        )
+        
+        IF has_references:
+            complexity_score += 1  # Needs context
+    
+    # RULE 6: Technical indicators detection
+    technical_terms = [
+        "moving average", "RSI", "PE ratio", "dividend yield",
+        "market cap", "earnings", "volatility", "correlation"
+    ]
+    
+    IF any(term in user_query.lower() for term in technical_terms):
+        complexity_score += 1  # Requires data analysis
+    
+    # RULE 7: Risk assessment keywords
+    risk_keywords = [
+        "should I", "recommend", "invest", "buy", "sell",
+        "portfolio", "risk", "safe", "best"
+    ]
+    
+    IF any(keyword in user_query.lower() for keyword in risk_keywords):
+        complexity_score += 2  # High-stakes advice
+    
+    # FINAL SCORING THRESHOLDS
+    IF complexity_score <= 3:
+        RETURN ComplexityLevel.SIMPLE
+    ELIF complexity_score <= 6:
+        RETURN ComplexityLevel.MODERATE
+    ELIF complexity_score <= 10:
+        RETURN ComplexityLevel.COMPLEX
+    ELSE:
+        RETURN ComplexityLevel.CRITICAL
+
+END FUNCTION
+
+
+EXAMPLE SCORING:
+
+Query: "What is a stock?"
+├─ Intent: FACTUAL_QUESTION → +1
+├─ Word count: 4 → +0
+├─ Question markers: 1 → +0
+├─ Entities: 0 → +0
+├─ Context dependency: No → +0
+├─ Technical terms: No → +0
+├─ Risk keywords: No → +0
+└─ TOTAL: 1 → SIMPLE ✓
+
+Query: "Should I invest in Apple stock for my retirement portfolio?"
+├─ Intent: PERSONALIZED_ADVICE → +4
+├─ Word count: 10 → +1
+├─ Question markers: 1 → +0
+├─ Entities: 2 (Apple, retirement) → +2
+├─ Context dependency: No → +0
+├─ Technical terms: No → +0
+├─ Risk keywords: "should I", "invest", "portfolio" → +2
+└─ TOTAL: 9 → COMPLEX ✓
+
+Query: "Compare Apple and Microsoft stocks, analyze their PE ratios, 
+        dividend yields, and tell me which one is better for long-term 
+        growth considering market volatility?"
+├─ Intent: COMPARISON_REQUEST → +3
+├─ Word count: 25 → +2
+├─ Question markers: 3 ("and", "and") → +2
+├─ Entities: 2 (AAPL, MSFT) → +2
+├─ Context dependency: No → +0
+├─ Technical terms: "PE ratio", "dividend yield", "volatility" → +1
+├─ Risk keywords: "better", "invest" → +2
+└─ TOTAL: 12 → CRITICAL ✓
+
+
+7.2 PORTFOLIO GENERATION ALGORITHM
+--------------------------------------------------------------------------------
+
+PURPOSE: Generate diversified stock portfolio based on risk tolerance
+
+INPUT:
+- risk_level: "low" | "moderate" | "high"
+- investment_amount: float
+- preferences: dict (optional)
+
+OUTPUT:
+- List of stocks with allocations
+- Sector distribution
+- Expected return & risk metrics
+
+
+ALGORITHM:
+
+FUNCTION generate_portfolio(
+    risk_level: str,
+    investment_amount: float,
+    preferences: dict = {}
+) -> Portfolio:
+    
+    # STEP 1: Load stock universe
+    stock_universe = load_stock_universe()  # 31 stocks
+    
+    # STEP 2: Filter by preferences
+    IF preferences.exclude_sectors:
+        stock_universe = filter_out_sectors(
+            stock_universe, 
+            preferences.exclude_sectors
+        )
+    
+    IF preferences.min_dividend_yield:
+        stock_universe = filter_by_dividend(
+            stock_universe, 
+            min_yield=preferences.min_dividend_yield
+        )
+    
+    # STEP 3: Get risk-based template
+    template = get_portfolio_template(risk_level)
+    
+    # Templates define:
+    # - Number of stocks (low: 12-15, moderate: 10-12, high: 8-10)
+    # - Sector allocation ranges
+    # - Stock selection criteria
+    
+    # STEP 4: Sector allocation
+    sector_targets = template.sector_allocation
+    
+    # Example for MODERATE risk:
+    # {
+    #   "Technology": 30-35%,
+    #   "Healthcare": 20-25%,
+    #   "Financial": 15-20%,
+    #   "Consumer": 10-15%,
+    #   "Industrial": 5-10%
+    # }
+    
+    # STEP 5: Stock selection per sector
+    selected_stocks = []
+    
+    FOR each sector IN sector_targets:
+        # Get stocks in this sector
+        sector_stocks = filter_by_sector(stock_universe, sector)
+        
+        # Rank stocks by quality score
+        ranked_stocks = rank_stocks(
+            sector_stocks,
+            criteria={
+                "market_cap": 0.3,      # 30% weight
+                "pe_ratio": 0.2,        # Lower PE preferred
+                "revenue_growth": 0.25, # Higher growth preferred
+                "dividend_yield": 0.15, # Moderate dividend
+                "volatility": 0.1       # Lower volatility preferred
+            }
+        )
+        
+        # Select top stocks for this sector
+        num_stocks_needed = calculate_stocks_for_sector(
+            sector_allocation=sector_targets[sector],
+            total_stocks=template.total_stocks
+        )
+        
+        selected_stocks.extend(ranked_stocks[:num_stocks_needed])
+    
+    # STEP 6: Calculate allocations
+    total_stocks = len(selected_stocks)
+    base_allocation = investment_amount / total_stocks
+    
+    # Adjust allocations based on stock quality
+    allocations = []
+    
+    FOR each stock IN selected_stocks:
+        # Calculate quality-weighted allocation
+        quality_multiplier = stock.quality_score / avg_quality_score
+        
+        allocation = base_allocation * quality_multiplier
+        
+        # Ensure within limits (no stock > 20% for moderate risk)
+        max_allocation = investment_amount * template.max_single_stock
+        allocation = min(allocation, max_allocation)
+        
+        allocations.append({
+            "stock": stock,
+            "amount": allocation,
+            "percentage": (allocation / investment_amount) * 100
+        })
+    
+    # STEP 7: Normalize to 100%
+    total_allocated = sum(a["amount"] for a in allocations)
+    normalization_factor = investment_amount / total_allocated
+    
+    FOR each allocation IN allocations:
+        allocation["amount"] *= normalization_factor
+        allocation["percentage"] *= normalization_factor
+        allocation["shares"] = floor(allocation["amount"] / allocation["stock"].price)
+    
+    # STEP 8: Calculate portfolio metrics
+    metrics = calculate_portfolio_metrics(allocations)
+    
+    # STEP 9: Validate constraints
+    IF NOT validate_portfolio_constraints(allocations, template):
+        # Recursive refinement if constraints violated
+        RETURN generate_portfolio_refined(...)
+    
+    # STEP 10: Return portfolio
+    RETURN Portfolio(
+        stocks=allocations,
+        sector_distribution=calculate_sector_distribution(allocations),
+        metrics=metrics,
+        risk_level=risk_level
+    )
+
+END FUNCTION
+
+
+SUPPORTING ALGORITHM: Stock Ranking
+
+FUNCTION rank_stocks(stocks: list, criteria: dict) -> list:
+    """Rank stocks by weighted quality score"""
+    
+    FOR each stock IN stocks:
+        score = 0
+        
+        # Market cap score (larger = better)
+        market_cap_score = normalize(stock.market_cap, 0, max_market_cap)
+        score += market_cap_score * criteria["market_cap"]
+        
+        # PE ratio score (lower = better)
+        pe_score = 1 - normalize(stock.pe_ratio, 0, 50)
+        score += pe_score * criteria["pe_ratio"]
+        
+        # Revenue growth score (higher = better)
+        growth_score = normalize(stock.revenue_growth, -10, 50)
+        score += growth_score * criteria["revenue_growth"]
+        
+        # Dividend yield score
+        dividend_score = normalize(stock.dividend_yield, 0, 10)
+        score += dividend_score * criteria["dividend_yield"]
+        
+        # Volatility score (lower = better)
+        volatility_score = 1 - normalize(stock.volatility, 0, 100)
+        score += volatility_score * criteria["volatility"]
+        
+        stock.quality_score = score
+    
+    # Sort by quality score (descending)
+    RETURN sorted(stocks, key=lambda s: s.quality_score, reverse=True)
+
+END FUNCTION
+
+
+SUPPORTING ALGORITHM: Portfolio Metrics Calculation
+
+FUNCTION calculate_portfolio_metrics(allocations: list) -> dict:
+    """Calculate expected return, risk, and other metrics"""
+    
+    # Expected annual return (weighted average)
+    expected_return = 0
+    FOR each allocation IN allocations:
+        weight = allocation["percentage"] / 100
+        expected_return += weight * allocation["stock"].expected_return
+    
+    # Portfolio volatility (simplified)
+    # Using weighted average volatility (ignores correlation)
+    volatility = 0
+    FOR each allocation IN allocations:
+        weight = allocation["percentage"] / 100
+        volatility += weight * allocation["stock"].volatility
+    
+    # Sharpe ratio (return per unit of risk)
+    # Assuming risk-free rate = 4%
+    risk_free_rate = 4.0
+    sharpe_ratio = (expected_return - risk_free_rate) / volatility
+    
+    # Dividend yield (weighted average)
+    dividend_yield = 0
+    FOR each allocation IN allocations:
+        weight = allocation["percentage"] / 100
+        dividend_yield += weight * allocation["stock"].dividend_yield
+    
+    # Diversification score (based on sector distribution)
+    sector_counts = count_sectors(allocations)
+    num_sectors = len(sector_counts)
+    
+    # Perfect diversification = 5 sectors with equal weights
+    # Score decreases with concentration
+    diversification_score = calculate_diversification_index(sector_counts)
+    
+    # Max drawdown (worst historical loss)
+    # Simplified: use worst single-stock drawdown weighted
+    max_drawdown = 0
+    FOR each allocation IN allocations:
+        weight = allocation["percentage"] / 100
+        max_drawdown += weight * allocation["stock"].max_drawdown
+    
+    RETURN {
+        "expected_annual_return": expected_return,
+        "volatility": volatility,
+        "sharpe_ratio": sharpe_ratio,
+        "dividend_yield": dividend_yield,
+        "diversification_score": diversification_score,
+        "max_drawdown": max_drawdown
+    }
+
+END FUNCTION
+
+
+EXAMPLE EXECUTION:
+
+Input:
+  risk_level = "moderate"
+  investment_amount = 10000
+  preferences = {}
+
+Execution:
+1. Load 31 stocks from universe
+2. No filtering needed (no preferences)
+3. Get moderate risk template:
+   - Total stocks: 10-12
+   - Max single stock: 15%
+   - Sector allocation: {Tech: 30-35%, Healthcare: 20-25%, ...}
+
+4. Sector allocation:
+   Technology: 32.5% (midpoint)
+   Healthcare: 22.5%
+   Financial: 17.5%
+   Consumer: 12.5%
+   Industrial: 7.5%
+   Cash: 7.5%
+
+5. Stock selection:
+   Technology (4 stocks):
+     - AAPL (quality: 0.92)
+     - MSFT (quality: 0.89)
+     - NVDA (quality: 0.85)
+     - GOOGL (quality: 0.83)
+   
+   Healthcare (3 stocks):
+     - JNJ (quality: 0.87)
+     - UNH (quality: 0.84)
+     - PFE (quality: 0.79)
+   
+   Financial (2 stocks):
+     - JPM (quality: 0.88)
+     - V (quality: 0.86)
+   
+   Consumer (2 stocks):
+     - WMT (quality: 0.82)
+     - PG (quality: 0.80)
+   
+   Industrial (1 stock):
+     - HON (quality: 0.81)
+
+6. Base allocation: $10,000 / 12 = $833.33 per stock
+
+7. Quality-weighted allocation:
+   AAPL: $833 * 1.08 = $900  → 9.0%
+   MSFT: $833 * 1.05 = $875  → 8.75%
+   NVDA: $833 * 1.00 = $833  → 8.33%
+   ... (continues for all 12 stocks)
+
+8. Normalize to exactly 100% ($10,000 total)
+
+9. Calculate metrics:
+   Expected return: 10.5%
+   Volatility: 15.2%
+   Sharpe ratio: 0.43
+   Dividend yield: 2.1%
+   Diversification: 0.82
+
+10. Validate: All constraints met ✓
+
+Output: Portfolio with 12 stocks, balanced across 5 sectors
+
+
+7.3 RAG RETRIEVAL RANKING ALGORITHM
+--------------------------------------------------------------------------------
+
+PURPOSE: Rank retrieved documents by relevance to user query
+
+INPUT:
+- query_embedding: vector[1536]
+- candidate_documents: list of documents with embeddings
+- intent: str
+- conversation_history: list
+
+OUTPUT:
+- Ranked list of documents with relevance scores
+
+
+ALGORITHM:
+
+FUNCTION rank_retrieved_documents(
+    query_embedding: vector,
+    candidate_documents: list,
+    intent: str,
+    conversation_history: list
+) -> list:
+    
+    # STEP 1: Calculate base similarity scores
+    FOR each document IN candidate_documents:
+        # Cosine similarity (PGVector already computed this)
+        document.similarity_score = 1 - document.distance
+        
+        # Range: 0 (dissimilar) to 1 (identical)
+    
+    # STEP 2: Apply intent-based boosting
+    FOR each document IN candidate_documents:
+        boost_factor = 1.0
+        
+        # Boost educational content for concept explanations
+        IF intent == "CONCEPT_EXPLANATION":
+            IF document.source == "educational_content":
+                boost_factor = 1.2
+        
+        # Boost conversation history for follow-ups
+        ELIF intent == "FOLLOW_UP_QUESTION":
+            IF document.source == "conversations":
+                boost_factor = 1.3
+        
+        # Boost recent data for market queries
+        ELIF intent == "PERSONALIZED_ADVICE":
+            IF document.source == "market_data":
+                boost_factor = 1.15
+        
+        document.boosted_score = document.similarity_score * boost_factor
+    
+    # STEP 3: Apply freshness decay
+    FOR each document IN candidate_documents:
+        age_days = (current_time - document.created_at).days
+        
+        # Freshness matters more for market data
+        IF document.source == "market_data":
+            # Exponential decay (half-life: 7 days)
+            freshness_factor = exp(-0.1 * age_days)
+        
+        ELIF document.source == "conversations":
+            # Slower decay (half-life: 30 days)
+            freshness_factor = exp(-0.023 * age_days)
+        
+        ELSE:  # Educational content
+            # Minimal decay (timeless knowledge)
+            freshness_factor = 1.0
+        
+        document.fresh_score = document.boosted_score * freshness_factor
+    
+    # STEP 4: Apply user-level matching
+    FOR each document IN candidate_documents:
+        level_match = 1.0
+        
+        IF document.source == "educational_content":
+            user_level = infer_user_level(conversation_history)
+            # user_level: "beginner", "intermediate", "advanced"
+            
+            IF document.level == user_level:
+                level_match = 1.1  # 10% boost for level match
+            ELIF abs(level_distance(user_level, document.level)) == 1:
+                level_match = 1.0  # No penalty for adjacent level
+            ELSE:
+                level_match = 0.9  # Small penalty for mismatch
+        
+        document.level_matched_score = document.fresh_score * level_match
+    
+    # STEP 5: Diversity penalty (avoid redundancy)
+    seen_topics = set()
+    
+    FOR each document IN candidate_documents:
+        IF document.topic IN seen_topics:
+            # Penalize duplicate topics
+            document.diversity_penalty = 0.8
+        ELSE:
+            seen_topics.add(document.topic)
+            document.diversity_penalty = 1.0
+        
+        document.final_score = (
+            document.level_matched_score * document.diversity_penalty
+        )
+    
+    # STEP 6: Sort by final score (descending)
+    ranked_documents = sorted(
+        candidate_documents,
+        key=lambda d: d.final_score,
+        reverse=True
+    )
+    
+    # STEP 7: Apply relevance threshold
+    threshold = 0.6
+    filtered_documents = [
+        doc for doc in ranked_documents 
+        IF doc.similarity_score >= threshold
+    ]
+    
+    RETURN filtered_documents
+
+END FUNCTION
+
+
+EXAMPLE SCORING:
+
+Query: "What is compound interest?" (CONCEPT_EXPLANATION)
+
+Document 1: "Compound Interest - Definition"
+├─ Similarity: 0.95
+├─ Intent boost: 1.2 (educational content) → 1.14
+├─ Freshness: N/A (timeless) → 1.14
+├─ Level match: 1.1 (beginner match) → 1.254
+├─ Diversity: 1.0 (first mention) → 1.254
+└─ FINAL SCORE: 1.254 → Rank #1 ✓
+
+Document 2: "Simple vs Compound Interest"
+├─ Similarity: 0.88
+├─ Intent boost: 1.2 → 1.056
+├─ Freshness: N/A → 1.056
+├─ Level match: 1.1 → 1.162
+├─ Diversity: 0.8 (duplicate "interest" topic) → 0.930
+└─ FINAL SCORE: 0.930 → Rank #2 ✓
+
+Document 3: Past conversation about compound interest
+├─ Similarity: 0.85
+├─ Intent boost: 1.0 (not conversation-related intent) → 0.85
+├─ Freshness: 0.95 (15 days old) → 0.808
+├─ Level match: N/A → 0.808
+├─ Diversity: 0.8 → 0.646
+└─ FINAL SCORE: 0.646 → Rank #3 ✓
+
+
+7.4 AGENT SELECTION ALGORITHM
+--------------------------------------------------------------------------------
+
+PURPOSE: Select appropriate agents based on query analysis
+
+INPUT:
+- intent: str
+- complexity: ComplexityLevel
+- entities: list
+- query: str
+
+OUTPUT:
+- List of agents to invoke
+- Execution mode (direct, sequential, parallel)
+
+
+ALGORITHM:
+
+FUNCTION select_agents(
+    intent: str,
+    complexity: ComplexityLevel,
+    entities: list,
+    query: str
+) -> AgentPlan:
+    
+    selected_agents = []
+    execution_mode = "direct"
+    
+    # RULE-BASED AGENT SELECTION
+    
+    # RULE 1: Query Router always runs first (already done)
+    # This function is called AFTER query router
+    
+    # RULE 2: Intent-based primary agent
+    primary_agent_map = {
+        "FACTUAL_QUESTION": "educational_agent",
+        "CONCEPT_EXPLANATION": "educational_agent",
+        "FOLLOW_UP_QUESTION": None,  # Determine from context
+        "COMPARISON_REQUEST": "market_data_agent",
+        "PERSONALIZED_ADVICE": "portfolio_builder_agent",
+        "CRITICAL_DECISION": "portfolio_builder_agent"
+    }
+    
+    primary_agent = primary_agent_map.get(intent)
+    
+    IF primary_agent:
+        selected_agents.append(primary_agent)
+    
+    # RULE 3: Entity-based additional agents
+    IF entities.contains_stock_symbols() OR entities.contains_companies():
+        IF "market_data_agent" NOT IN selected_agents:
+            selected_agents.append("market_data_agent")
+    
+    # RULE 4: Educational support for complex queries
+    IF complexity IN [ComplexityLevel.COMPLEX, ComplexityLevel.CRITICAL]:
+        # Always include educational agent for context
+        IF "educational_agent" NOT IN selected_agents:
+            selected_agents.append("educational_agent")
+    
+    # RULE 5: Portfolio analysis for investment queries
+    IF query_mentions_portfolio(query):
+        IF "portfolio_builder_agent" NOT IN selected_agents:
+            selected_agents.append("portfolio_builder_agent")
+    
+    # DETERMINE EXECUTION MODE
+    
+    IF len(selected_agents) == 0:
+        # Fallback: use educational agent
+        selected_agents = ["educational_agent"]
+        execution_mode = "direct"
+    
+    ELIF len(selected_agents) == 1:
+        execution_mode = "direct"
+    
+    ELSE:  # Multiple agents
+        # Check for dependencies
+        dependencies = check_agent_dependencies(selected_agents, intent)
+        
+        IF dependencies.has_sequential_dependency():
+            execution_mode = "sequential"
+            selected_agents = topological_sort(selected_agents, dependencies)
+        ELSE:
+            execution_mode = "parallel"
+    
+    RETURN AgentPlan(
+        agents=selected_agents,
+        execution_mode=execution_mode,
+        dependencies=dependencies
+    )
+
+END FUNCTION
+
+
+SUPPORTING ALGORITHM: Dependency Detection
+
+FUNCTION check_agent_dependencies(
+    agents: list,
+    intent: str
+) -> DependencyGraph:
+    
+    dependencies = DependencyGraph()
+    
+    # RULE 1: Educational agent should run first for critical queries
+    IF intent == "CRITICAL_DECISION":
+        IF "educational_agent" IN agents AND "portfolio_builder_agent" IN agents:
+            # Portfolio builder depends on educational context
+            dependencies.add_edge("educational_agent", "portfolio_builder_agent")
+    
+    # RULE 2: Market data needed before portfolio building
+    IF "market_data_agent" IN agents AND "portfolio_builder_agent" IN agents:
+        dependencies.add_edge("market_data_agent", "portfolio_builder_agent")
+    
+    # RULE 3: Educational + Market Data are independent (parallel)
+    # No dependency needed
+    
+    RETURN dependencies
+
+END FUNCTION
+
+
+EXAMPLE EXECUTIONS:
+
+Example 1: "What is a mutual fund?"
+├─ Intent: CONCEPT_EXPLANATION
+├─ Complexity: SIMPLE
+├─ Entities: []
+├─ Primary agent: educational_agent
+├─ Additional agents: None
+├─ Execution mode: direct
+└─ PLAN: [educational_agent] (direct) ✓
+
+Example 2: "Tell me about Apple stock"
+├─ Intent: FACTUAL_QUESTION
+├─ Complexity: MODERATE
+├─ Entities: [AAPL]
+├─ Primary agent: educational_agent
+├─ Additional agents: market_data_agent (stock entity detected)
+├─ Dependencies: None (independent)
+├─ Execution mode: parallel
+└─ PLAN: [educational_agent, market_data_agent] (parallel) ✓
+
+Example 3: "Should I invest $10k in tech stocks?"
+├─ Intent: PERSONALIZED_ADVICE
+├─ Complexity: COMPLEX
+├─ Entities: [tech sector, $10k]
+├─ Primary agent: portfolio_builder_agent
+├─ Additional agents:
+│   - educational_agent (complexity)
+│   - market_data_agent (tech stocks)
+├─ Dependencies:
+│   - market_data → portfolio_builder
+│   - educational independent
+├─ Execution mode: mixed (educational || market_data) → portfolio_builder
+└─ PLAN: Sequential with parallel stage ✓
+
+
+7.5 RISK SCORE CALCULATION ALGORITHM
+--------------------------------------------------------------------------------
+
+PURPOSE: Calculate portfolio risk score (0-100 scale)
+
+INPUT:
+- portfolio: list of stock allocations
+- market_conditions: dict
+
+OUTPUT:
+- risk_score: float (0-100)
+- risk_breakdown: dict
+
+
+ALGORITHM:
+
+FUNCTION calculate_risk_score(
+    portfolio: list,
+    market_conditions: dict
+) -> tuple:
+    
+    # Initialize sub-scores
+    volatility_risk = 0
+    concentration_risk = 0
+    sector_risk = 0
+    liquidity_risk = 0
+    market_risk = 0
+    
+    # COMPONENT 1: Volatility Risk (0-30 points)
+    # Based on portfolio's historical volatility
+    
+    portfolio_volatility = 0
+    FOR each allocation IN portfolio:
+        weight = allocation.percentage / 100
+        stock_volatility = allocation.stock.historical_volatility
+        portfolio_volatility += weight * stock_volatility
+    
+    # Normalize to 0-30 scale
+    # Low volatility (< 10%): 0-10 points
+    # Medium volatility (10-20%): 10-20 points
+    # High volatility (> 20%): 20-30 points
+    
+    IF portfolio_volatility < 10:
+        volatility_risk = (portfolio_volatility / 10) * 10
+    ELIF portfolio_volatility < 20:
+        volatility_risk = 10 + ((portfolio_volatility - 10) / 10) * 10
+    ELSE:
+        volatility_risk = 20 + min(((portfolio_volatility - 20) / 20) * 10, 10)
+    
+    # COMPONENT 2: Concentration Risk (0-25 points)
+    # Based on allocation distribution
+    
+    # Calculate Herfindahl-Hirschman Index (HHI)
+    hhi = 0
+    FOR each allocation IN portfolio:
+        weight = allocation.percentage / 100
+        hhi += weight ** 2
+    
+    # HHI ranges from 1/n (perfectly diversified) to 1 (100% in one stock)
+    # Higher HHI = more concentrated = higher risk
+    
+    # For 10 stocks: min HHI = 0.1, max HHI = 1.0
+    # Normalize to 0-25 scale
+    
+    num_stocks = len(portfolio)
+    min_hhi = 1 / num_stocks
+    concentration_risk = ((hhi - min_hhi) / (1 - min_hhi)) * 25
+    
+    # COMPONENT 3: Sector Risk (0-20 points)
+    # Based on sector concentration
+    
+    sector_allocation = calculate_sector_distribution(portfolio)
+    max_sector_weight = max(sector_allocation.values())
+    
+    # Ideal: 5 sectors at 20% each = low risk
+    # Reality: 1 sector at 50%+ = high risk
+    
+    IF max_sector_weight < 30:
+        sector_risk = (max_sector_weight / 30) * 10
+    ELSE:
+        sector_risk = 10 + ((max_sector_weight - 30) / 70) * 10
+    
+    # Check number of sectors
+    num_sectors = len(sector_allocation)
+    IF num_sectors < 3:
+        sector_risk += 10  # Penalty for poor sector diversity
+    ELIF num_sectors < 4:
+        sector_risk += 5
+    
+    # COMPONENT 4: Liquidity Risk (0-15 points)
+    # Based on average daily trading volume
+    
+    avg_liquidity_score = 0
+    FOR each allocation IN portfolio:
+        weight = allocation.percentage / 100
+        
+        # Liquidity score based on avg daily volume
+        # High volume (> $1B): Low risk
+        # Medium volume ($100M - $1B): Medium risk
+        # Low volume (< $100M): High risk
+        
+        IF allocation.stock.avg_daily_volume > 1_000_000_000:
+            liquidity_score = 0
+        ELIF allocation.stock.avg_daily_volume > 100_000_000:
+            liquidity_score = 5
+        ELSE:
+            liquidity_score = 10
+        
+        avg_liquidity_score += weight * liquidity_score
+    
+    liquidity_risk = avg_liquidity_score * 1.5  # Scale to 0-15
+    
+    # COMPONENT 5: Market Risk (0-10 points)
+    # Based on current market conditions
+    
+    vix_level = market_conditions.get("vix", 15)  # Market volatility index
+    
+    # VIX interpretation:
+    # < 12: Low volatility (bull market)
+    # 12-20: Normal volatility
+    # 20-30: Elevated volatility
+    # > 30: High volatility (bear market)
+    
+    IF vix_level < 12:
+        market_risk = 0
+    ELIF vix_level < 20:
+        market_risk = ((vix_level - 12) / 8) * 3
+    ELIF vix_level < 30:
+        market_risk = 3 + ((vix_level - 20) / 10) * 4
+    ELSE:
+        market_risk = 7 + min(((vix_level - 30) / 20) * 3, 3)
+    
+    # TOTAL RISK SCORE (0-100)
+    total_risk = (
+        volatility_risk +      # 0-30
+        concentration_risk +   # 0-25
+        sector_risk +          # 0-20
+        liquidity_risk +       # 0-15
+        market_risk            # 0-10
+    )
+    
+    # Risk breakdown for transparency
+    risk_breakdown = {
+        "volatility_risk": round(volatility_risk, 2),
+        "concentration_risk": round(concentration_risk, 2),
+        "sector_risk": round(sector_risk, 2),
+        "liquidity_risk": round(liquidity_risk, 2),
+        "market_risk": round(market_risk, 2),
+        "total_risk": round(total_risk, 2),
+        "risk_category": categorize_risk(total_risk)
+    }
+    
+    RETURN (total_risk, risk_breakdown)
+
+END FUNCTION
+
+
+SUPPORTING FUNCTION: Risk Categorization
+
+FUNCTION categorize_risk(risk_score: float) -> str:
+    IF risk_score < 25:
+        RETURN "Very Low"
+    ELIF risk_score < 40:
+        RETURN "Low"
+    ELIF risk_score < 55:
+        RETURN "Moderate"
+    ELIF risk_score < 70:
+        RETURN "High"
+    ELSE:
+        RETURN "Very High"
+END FUNCTION
+
+
+EXAMPLE CALCULATION:
+
+Portfolio:
+- 12 stocks
+- Volatility: 15%
+- Max stock: 12%
+- Max sector: 35% (Technology)
+- 5 sectors represented
+- All large-cap stocks (high liquidity)
+- VIX: 18
+
+Calculation:
+1. Volatility Risk:
+   15% volatility → Medium range
+   = 10 + ((15 - 10) / 10) * 10 = 15 points
+
+2. Concentration Risk:
+   HHI = 0.12² × 4 + 0.08² × 8 = 0.11
+   Min HHI = 1/12 = 0.083
+   = ((0.11 - 0.083) / (1 - 0.083)) * 25 = 0.74 points
+
+3. Sector Risk:
+   Max sector: 35%
+   = 10 + ((35 - 30) / 70) * 10 = 10.7 points
+   5 sectors → No penalty
+
+4. Liquidity Risk:
+   All stocks > $1B volume → 0 × 1.5 = 0 points
+
+5. Market Risk:
+   VIX = 18
+   = ((18 - 12) / 8) * 3 = 2.25 points
+
+TOTAL: 15 + 0.74 + 10.7 + 0 + 2.25 = 28.69 points
+CATEGORY: Low Risk ✓
+
+
+--- DIAGRAM 7.1: COMPLEXITY ASSESSMENT FLOW ---
+
+[MERMAID CODE - Copy this to Mermaid Live Editor]
+
+graph TD
+    START[User Query] --> EXTRACT[Extract Features]
+    
+    EXTRACT --> INTENT[Intent Score<br/>1-5 points]
+    EXTRACT --> LENGTH[Query Length<br/>0-2 points]
+    EXTRACT --> QUESTIONS[Multiple Questions<br/>0-2 points]
+    EXTRACT --> ENTITIES[Financial Entities<br/>0-2 points]
+    EXTRACT --> CONTEXT[Context Dependency<br/>0-1 points]
+    EXTRACT --> TECHNICAL[Technical Terms<br/>0-1 points]
+    EXTRACT --> RISK[Risk Keywords<br/>0-2 points]
+    
+    INTENT --> SUM[Sum All Scores]
+    LENGTH --> SUM
+    QUESTIONS --> SUM
+    ENTITIES --> SUM
+    CONTEXT --> SUM
+    TECHNICAL --> SUM
+    RISK --> SUM
+    
+    SUM --> THRESHOLD{Score?}
+    
+    THRESHOLD -->|≤ 3| SIMPLE[SIMPLE<br/>Direct Response]
+    THRESHOLD -->|4-6| MODERATE[MODERATE<br/>Single Agent + RAG]
+    THRESHOLD -->|7-10| COMPLEX[COMPLEX<br/>Multi-Agent Parallel]
+    THRESHOLD -->|≥ 11| CRITICAL[CRITICAL<br/>Sequential + Reflection]
+    
+    style SIMPLE fill:#2ECC71
+    style MODERATE fill:#F39C12
+    style COMPLEX fill:#E67E22
+    style CRITICAL fill:#E74C3C
+
+[END MERMAID CODE]
+
+
+--- DIAGRAM 7.2: PORTFOLIO GENERATION FLOW ---
+
+[MERMAID CODE - Copy this to Mermaid Live Editor]
+
+graph TD
+    START[Input: Risk Level, Amount] --> LOAD[Load Stock Universe<br/>31 stocks]
+    
+    LOAD --> FILTER[Apply Preferences<br/>Sectors, Dividends, ESG]
+    
+    FILTER --> TEMPLATE[Get Risk Template<br/>Allocation Rules]
+    
+    TEMPLATE --> SECTOR[Allocate by Sector<br/>Tech: 30-35%<br/>Healthcare: 20-25%<br/>etc.]
+    
+    SECTOR --> SELECT[Select Stocks per Sector]
+    
+    SELECT --> RANK[Rank by Quality Score<br/>Market Cap: 30%<br/>PE Ratio: 20%<br/>Growth: 25%<br/>etc.]
+    
+    RANK --> ALLOCATE[Calculate Allocations<br/>Base + Quality Adjustment]
+    
+    ALLOCATE --> NORMALIZE[Normalize to 100%<br/>Calculate Share Counts]
+    
+    NORMALIZE --> METRICS[Calculate Metrics<br/>Return, Risk, Sharpe]
+    
+    METRICS --> VALIDATE{Constraints OK?}
+    
+    VALIDATE -->|No| REFINE[Refine Allocations]
+    REFINE --> ALLOCATE
+    
+    VALIDATE -->|Yes| OUTPUT[Return Portfolio]
+    
+    style OUTPUT fill:#2ECC71
+
+[END MERMAID CODE]
+
+
+================================================================================
+
+SUMMARY: SECTION 7 - KEY ALGORITHMS
+================================================================================
+
+7.1 Query Complexity Assessment
+- 7-rule scoring system (0-15+ points)
+- 4 complexity levels (Simple, Moderate, Complex, Critical)
+- Example calculations for 3 query types
+- Determines orchestration strategy
+
+7.2 Portfolio Generation
+- Risk-based template selection
+- Multi-stage stock selection process
+- Quality-weighted allocation algorithm
+- Portfolio metrics calculation (Sharpe, volatility, etc.)
+- Constraint validation and refinement
+- Complete example execution
+
+7.3 RAG Retrieval Ranking
+- Multi-factor relevance scoring
+- Intent-based boosting
+- Freshness decay (exponential)
+- User-level matching
+- Diversity penalty for redundancy
+- Example scoring walkthrough
+
+7.4 Agent Selection
+- Rule-based selection logic
+- Dependency detection
+- Execution mode determination (direct/parallel/sequential)
+- 3 example executions
+
+7.5 Risk Score Calculation
+- 5-component risk scoring (0-100 scale)
+- Volatility risk (0-30 points)
+- Concentration risk via HHI (0-25 points)
+- Sector risk (0-20 points)
+- Liquidity risk (0-15 points)
+- Market risk via VIX (0-10 points)
+- Risk categorization (Very Low to Very High)
+- Complete example calculation
+
+2 Mermaid Diagrams:
+- Complexity assessment flow
+- Portfolio generation flow
+
+================================================================================
+
+SECTION 7 - COMPLETE! ✅
+
+Next sections:
+- Section 8: External Integrations
+- Section 9: Security & Privacy
+- Section 10: Technology Justification
+- Section 11: Future Enhancements
+
+Continue with Section 8?

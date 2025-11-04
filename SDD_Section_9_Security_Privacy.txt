@@ -1,0 +1,783 @@
+================================================================================
+                    SYSTEM DESIGN DOCUMENT - SECTION 9
+                        SECURITY & PRIVACY
+================================================================================
+
+9. SECURITY & PRIVACY
+--------------------------------------------------------------------------------
+
+PURPOSE: Security measures and data protection strategies
+
+This section documents the security architecture, authentication mechanisms,
+data protection strategies, and privacy compliance measures.
+
+
+9.1 AUTHENTICATION & AUTHORIZATION
+--------------------------------------------------------------------------------
+
+9.1.1 JWT-BASED AUTHENTICATION
+
+APPROACH: Stateless token-based authentication
+
+SECURITY FEATURES:
+- HS256 algorithm (HMAC with SHA-256)
+- 256-bit secret key (stored in environment variables)
+- Token expiration: 24 hours (access), 30 days (refresh)
+- Token ID (jti) for revocation tracking
+- Refresh token rotation on use
+
+
+TOKEN STRUCTURE:
+
+Header:
+{
+  "alg": "HS256",
+  "typ": "JWT"
+}
+
+Payload:
+{
+  "sub": "user_id",           // Subject (user identifier)
+  "email": "user@example.com",
+  "token_type": "access",     // access or refresh
+  "iat": 1730304000,          // Issued at (Unix timestamp)
+  "exp": 1730390400,          // Expires at (Unix timestamp)
+  "jti": "unique-token-id"    // JWT ID for revocation
+}
+
+Signature:
+HMACSHA256(
+  base64UrlEncode(header) + "." + base64UrlEncode(payload),
+  secret_key
+)
+
+
+IMPLEMENTATION:
+
+import jwt
+from datetime import datetime, timedelta
+import secrets
+
+def create_jwt_token(
+    user_id: str,
+    token_type: str,
+    expires_delta: timedelta
+) -> str:
+    """Generate JWT token"""
+    
+    # Generate unique token ID
+    jti = secrets.token_urlsafe(32)
+    
+    # Create payload
+    now = datetime.utcnow()
+    payload = {
+        "sub": user_id,
+        "token_type": token_type,
+        "iat": now,
+        "exp": now + expires_delta,
+        "jti": jti
+    }
+    
+    # Sign token
+    token = jwt.encode(
+        payload,
+        settings.SECRET_KEY,
+        algorithm="HS256"
+    )
+    
+    # Store jti for potential revocation
+    if token_type == "access":
+        await store_token_jti(jti, user_id, expires_delta)
+    
+    return token
+
+
+def verify_jwt_token(token: str) -> dict:
+    """Verify and decode JWT token"""
+    
+    try:
+        # Decode and verify signature
+        payload = jwt.decode(
+            token,
+            settings.SECRET_KEY,
+            algorithms=["HS256"]
+        )
+        
+        # Check if token is revoked
+        jti = payload.get("jti")
+        if await is_token_revoked(jti):
+            raise InvalidTokenError("Token has been revoked")
+        
+        return payload
+        
+    except jwt.ExpiredSignatureError:
+        raise InvalidTokenError("Token has expired")
+    except jwt.InvalidTokenError as e:
+        raise InvalidTokenError(f"Invalid token: {e}")
+
+
+TOKEN REVOCATION (Logout):
+
+async def revoke_token(jti: str):
+    """Revoke token by adding jti to blacklist"""
+    
+    # Store in Redis with TTL matching token expiration
+    await redis_client.setex(
+        f"revoked_token:{jti}",
+        86400,  # 24 hours (access token expiration)
+        "1"
+    )
+
+async def is_token_revoked(jti: str) -> bool:
+    """Check if token is revoked"""
+    return await redis_client.exists(f"revoked_token:{jti}")
+
+
+9.1.2 PASSWORD SECURITY
+
+HASHING: bcrypt with cost factor 12
+
+WHY BCRYPT?
+- Designed for password hashing
+- Adaptive cost factor (can increase over time)
+- Includes salt automatically
+- Resistant to rainbow table attacks
+- Slow by design (prevents brute force)
+
+IMPLEMENTATION:
+
+import bcrypt
+
+def hash_password(password: str) -> str:
+    """Hash password using bcrypt"""
+    
+    # Generate salt and hash
+    salt = bcrypt.gensalt(rounds=12)  # 2^12 iterations
+    password_hash = bcrypt.hashpw(
+        password.encode('utf-8'),
+        salt
+    )
+    
+    return password_hash.decode('utf-8')
+
+
+def verify_password(password: str, password_hash: str) -> bool:
+    """Verify password against hash"""
+    
+    return bcrypt.checkpw(
+        password.encode('utf-8'),
+        password_hash.encode('utf-8')
+    )
+
+
+PASSWORD POLICY:
+- Minimum 8 characters
+- At least 1 uppercase letter
+- At least 1 lowercase letter
+- At least 1 digit
+- At least 1 special character (optional but recommended)
+
+VALIDATION:
+
+import re
+
+def validate_password(password: str) -> tuple[bool, str]:
+    """Validate password strength"""
+    
+    if len(password) < 8:
+        return False, "Password must be at least 8 characters"
+    
+    if not re.search(r"[A-Z]", password):
+        return False, "Password must contain uppercase letter"
+    
+    if not re.search(r"[a-z]", password):
+        return False, "Password must contain lowercase letter"
+    
+    if not re.search(r"\d", password):
+        return False, "Password must contain a digit"
+    
+    return True, "Password is strong"
+
+
+9.1.3 ROLE-BASED ACCESS CONTROL (RBAC)
+
+ROLES:
+- USER: Regular user (default)
+- ADMIN: Administrative access
+- ANALYST: Read-only analytics access (future)
+
+PERMISSIONS:
+
+USER role:
+- Create/read own conversations
+- Generate portfolios
+- Access chat API
+- Update own profile
+
+ADMIN role:
+- All USER permissions
+- View all users
+- Manage educational content
+- View system metrics
+- Manage user accounts
+
+IMPLEMENTATION:
+
+class User(Base):
+    __tablename__ = "users"
+    
+    id = Column(UUID, primary_key=True)
+    email = Column(String, unique=True)
+    password_hash = Column(String)
+    role = Column(String, default="USER")  # USER, ADMIN
+    is_active = Column(Boolean, default=True)
+
+
+def require_role(required_role: str):
+    """Decorator to enforce role-based access"""
+    
+    def decorator(func):
+        async def wrapper(*args, current_user: User, **kwargs):
+            if current_user.role != required_role and current_user.role != "ADMIN":
+                raise HTTPException(
+                    status_code=403,
+                    detail="Insufficient permissions"
+                )
+            return await func(*args, current_user=current_user, **kwargs)
+        return wrapper
+    return decorator
+
+
+# Usage
+@router.get("/admin/users")
+@require_role("ADMIN")
+async def list_all_users(current_user: User = Depends(get_current_user)):
+    # Only admins can access
+    ...
+
+
+9.2 DATA PROTECTION
+--------------------------------------------------------------------------------
+
+9.2.1 DATA ENCRYPTION
+
+ENCRYPTION AT REST:
+- Database: PostgreSQL with transparent data encryption (TDE)
+- Sensitive fields: Additional application-level encryption
+- API keys: Encrypted in database, decrypted at runtime
+
+ENCRYPTION IN TRANSIT:
+- HTTPS/TLS 1.3 for all API communication
+- Database connections over SSL
+- Certificate validation enforced
+
+APPLICATION-LEVEL ENCRYPTION:
+
+from cryptography.fernet import Fernet
+
+class EncryptionService:
+    """Service for encrypting sensitive data"""
+    
+    def __init__(self, encryption_key: str):
+        self.cipher = Fernet(encryption_key.encode())
+    
+    def encrypt(self, plaintext: str) -> str:
+        """Encrypt string data"""
+        encrypted = self.cipher.encrypt(plaintext.encode())
+        return encrypted.decode()
+    
+    def decrypt(self, ciphertext: str) -> str:
+        """Decrypt string data"""
+        decrypted = self.cipher.decrypt(ciphertext.encode())
+        return decrypted.decode()
+
+
+# Example: Encrypt API keys before storing
+async def store_user_api_key(
+    user_id: UUID,
+    api_key: str,
+    encryption_service: EncryptionService
+):
+    encrypted_key = encryption_service.encrypt(api_key)
+    
+    await db.execute(
+        update(User)
+        .where(User.id == user_id)
+        .values(encrypted_api_key=encrypted_key)
+    )
+
+
+9.2.2 DATA PRIVACY
+
+PERSONAL DATA HANDLING:
+- Minimal data collection (only essential fields)
+- User consent required for data processing
+- Clear privacy policy
+- Data retention policies
+
+DATA COLLECTED:
+- Email (authentication)
+- Name (personalization)
+- Phone (optional, for notifications)
+- Date of birth (optional, for age verification)
+- Financial preferences (risk tolerance, etc.)
+
+SENSITIVE DATA PROTECTION:
+- Portfolio data: Owned by user, isolated per user
+- Conversation history: Private, not shared
+- Financial data: Not stored (fetched in real-time)
+
+DATA ACCESS CONTROLS:
+- Users can only access their own data
+- Queries filtered by user_id
+- Row-level security in database
+
+IMPLEMENTATION:
+
+# Ensure user can only access own conversations
+async def get_conversation(
+    conversation_id: UUID,
+    db: AsyncSession,
+    current_user: User
+):
+    conversation = await db.execute(
+        select(Conversation)
+        .where(
+            Conversation.id == conversation_id,
+            Conversation.user_id == current_user.id  # Security filter
+        )
+    )
+    
+    result = conversation.scalar_one_or_none()
+    
+    if not result:
+        raise HTTPException(status_code=404, detail="Not found")
+    
+    return result
+
+
+9.2.3 DATA RETENTION & DELETION
+
+RETENTION POLICIES:
+- Active user data: Retained indefinitely
+- Inactive users (>2 years): Anonymized or deleted
+- Conversation history: Retained for 1 year
+- System logs: Retained for 90 days
+
+RIGHT TO DELETION (GDPR):
+Users can request account deletion
+
+async def delete_user_account(user_id: UUID, db: AsyncSession):
+    """Delete user and all associated data"""
+    
+    # Delete in order (respecting foreign keys)
+    
+    # 1. Delete messages
+    await db.execute(
+        delete(Message).where(Message.user_id == user_id)
+    )
+    
+    # 2. Delete conversations
+    await db.execute(
+        delete(Conversation).where(Conversation.user_id == user_id)
+    )
+    
+    # 3. Delete portfolios
+    await db.execute(
+        delete(Portfolio).where(Portfolio.user_id == user_id)
+    )
+    
+    # 4. Delete user
+    await db.execute(
+        delete(User).where(User.id == user_id)
+    )
+    
+    await db.commit()
+    
+    logger.info(f"User {user_id} and all data deleted")
+
+
+9.3 API SECURITY
+--------------------------------------------------------------------------------
+
+9.3.1 RATE LIMITING
+
+PURPOSE: Prevent abuse and DoS attacks
+
+LIMITS:
+- Authentication endpoints: 10 requests/minute per IP
+- Chat API: 100 requests/minute per user
+- General API: 1000 requests/hour per user
+
+IMPLEMENTATION:
+
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+limiter = Limiter(key_func=get_remote_address)
+
+# Apply to FastAPI app
+app.state.limiter = limiter
+
+# Rate limit specific endpoint
+@app.post("/api/v1/auth/login")
+@limiter.limit("10/minute")
+async def login(request: Request, credentials: LoginRequest):
+    ...
+
+
+CUSTOM RATE LIMITER (User-based):
+
+class UserRateLimiter:
+    """Rate limiter per user"""
+    
+    def __init__(self, redis_client):
+        self.redis = redis_client
+    
+    async def check_rate_limit(
+        self,
+        user_id: str,
+        endpoint: str,
+        max_requests: int,
+        window_seconds: int
+    ) -> bool:
+        """
+        Check if user is within rate limit
+        
+        Returns True if allowed, False if rate limited
+        """
+        key = f"rate_limit:{user_id}:{endpoint}"
+        
+        # Increment counter
+        current = await self.redis.incr(key)
+        
+        # Set expiry on first request
+        if current == 1:
+            await self.redis.expire(key, window_seconds)
+        
+        # Check limit
+        return current <= max_requests
+
+
+9.3.2 INPUT VALIDATION & SANITIZATION
+
+PYDANTIC MODELS: Automatic validation
+
+class ChatRequest(BaseModel):
+    conversation_id: UUID
+    message: str = Field(..., min_length=1, max_length=5000)
+    
+    @validator('message')
+    def sanitize_message(cls, v):
+        # Remove excessive whitespace
+        v = ' '.join(v.split())
+        
+        # Basic XSS prevention (remove HTML tags)
+        v = re.sub(r'<[^>]+>', '', v)
+        
+        return v
+
+
+SQL INJECTION PREVENTION:
+- Use SQLAlchemy ORM (parameterized queries)
+- Never concatenate user input into SQL
+- Validate all inputs before database operations
+
+# Safe (parameterized)
+stmt = select(User).where(User.email == user_email)
+
+# UNSAFE - Never do this!
+# query = f"SELECT * FROM users WHERE email = '{user_email}'"
+
+
+9.3.3 CORS (Cross-Origin Resource Sharing)
+
+from fastapi.middleware.cors import CORSMiddleware
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://finmentor.ai",      # Production frontend
+        "http://localhost:3000"       # Development frontend
+    ],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["*"],
+)
+
+
+9.3.4 SECURITY HEADERS
+
+# Add security headers to all responses
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Content-Security-Policy"] = "default-src 'self'"
+    
+    return response
+
+
+9.4 SECRETS MANAGEMENT
+--------------------------------------------------------------------------------
+
+ENVIRONMENT VARIABLES:
+All sensitive configuration stored in .env files
+
+# .env (never commit to Git!)
+DATABASE_URL=postgresql://user:pass@localhost/db
+SECRET_KEY=256-bit-random-string
+GEMINI_API_KEY=AIza...
+ENCRYPTION_KEY=fernet-key
+
+# Load in application
+from pydantic_settings import BaseSettings
+
+class Settings(BaseSettings):
+    database_url: str
+    secret_key: str
+    gemini_api_key: str
+    encryption_key: str
+    
+    class Config:
+        env_file = ".env"
+
+settings = Settings()
+
+
+PRODUCTION: Use secret management services
+- AWS Secrets Manager
+- Azure Key Vault
+- Google Secret Manager
+- HashiCorp Vault
+
+
+9.5 VULNERABILITY PREVENTION
+--------------------------------------------------------------------------------
+
+9.5.1 COMMON VULNERABILITIES & MITIGATIONS
+
+┌────────────────────────┬──────────────────────────────────────┐
+│ Vulnerability          │ Mitigation                           │
+├────────────────────────┼──────────────────────────────────────┤
+│ SQL Injection          │ SQLAlchemy ORM, parameterized queries│
+│ XSS                    │ Input sanitization, output encoding  │
+│ CSRF                   │ SameSite cookies, CSRF tokens        │
+│ Authentication bypass  │ JWT validation, token revocation     │
+│ Brute force            │ Rate limiting, account lockout       │
+│ Session hijacking      │ HTTPS only, HttpOnly cookies         │
+│ Information disclosure │ Error handling, no stack traces      │
+│ Dependency vulnerabilities │ Regular updates, security scans  │
+└────────────────────────┴──────────────────────────────────────┘
+
+
+9.5.2 SECURITY BEST PRACTICES
+
+1. Regular Security Audits
+   - Quarterly code reviews
+   - Dependency vulnerability scans
+   - Penetration testing
+
+2. Logging & Monitoring
+   - Log all authentication attempts
+   - Monitor suspicious patterns
+   - Alert on security events
+
+3. Error Handling
+   - Never expose internal details in errors
+   - Generic error messages to users
+   - Detailed logs for debugging (server-side only)
+
+# Good error handling
+try:
+    user = await authenticate_user(email, password)
+except AuthenticationError:
+    # Generic message (don't reveal if email exists)
+    raise HTTPException(
+        status_code=401,
+        detail="Invalid credentials"  # Generic!
+    )
+except Exception as e:
+    # Log detailed error server-side
+    logger.error(f"Auth error: {e}", exc_info=True)
+    
+    # Return generic error to user
+    raise HTTPException(
+        status_code=500,
+        detail="An error occurred"  # Generic!
+    )
+
+
+9.6 COMPLIANCE & STANDARDS
+--------------------------------------------------------------------------------
+
+9.6.1 GDPR COMPLIANCE
+
+REQUIREMENTS:
+- User consent for data processing ✓
+- Right to access data ✓
+- Right to deletion ✓
+- Data portability ✓
+- Privacy by design ✓
+
+IMPLEMENTATION:
+
+# Data export (GDPR right to data portability)
+@router.get("/api/v1/user/export-data")
+async def export_user_data(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Export all user data"""
+    
+    # Gather all user data
+    conversations = await get_user_conversations(current_user.id, db)
+    messages = await get_user_messages(current_user.id, db)
+    portfolios = await get_user_portfolios(current_user.id, db)
+    
+    # Create export package
+    export_data = {
+        "user_profile": {
+            "email": current_user.email,
+            "name": current_user.full_name,
+            "created_at": current_user.created_at.isoformat()
+        },
+        "conversations": [c.to_dict() for c in conversations],
+        "messages": [m.to_dict() for m in messages],
+        "portfolios": [p.to_dict() for p in portfolios],
+        "export_date": datetime.utcnow().isoformat()
+    }
+    
+    return export_data
+
+
+9.6.2 DATA ANONYMIZATION
+
+For analytics while preserving privacy:
+
+def anonymize_user_data(user_data: dict) -> dict:
+    """Anonymize user data for analytics"""
+    
+    return {
+        "user_id_hash": hashlib.sha256(
+            user_data["user_id"].encode()
+        ).hexdigest(),
+        "registration_date": user_data["created_at"].date(),
+        "total_conversations": user_data["conversation_count"],
+        "total_messages": user_data["message_count"],
+        # No PII included
+    }
+
+
+--- DIAGRAM 9.1: SECURITY ARCHITECTURE ---
+
+[MERMAID CODE - Copy this to Mermaid Live Editor]
+
+graph TB
+    subgraph Internet["Internet"]
+        USER[User/Client]
+    end
+    
+    subgraph Security["Security Layer"]
+        HTTPS[HTTPS/TLS 1.3]
+        CORS[CORS Policy]
+        RATE[Rate Limiter]
+        WAF[Web Application Firewall]
+    end
+    
+    subgraph Authentication["Authentication Layer"]
+        JWT[JWT Validator]
+        RBAC[Role-Based Access Control]
+        SESSION[Session Management]
+    end
+    
+    subgraph Application["Application Layer"]
+        API[FastAPI Backend]
+        VALIDATION[Input Validation]
+        SANITIZATION[Data Sanitization]
+    end
+    
+    subgraph Data["Data Layer"]
+        ENCRYPTION[Encryption Service]
+        DB[(PostgreSQL<br/>Encrypted at Rest)]
+    end
+    
+    USER -->|HTTPS| HTTPS
+    HTTPS --> CORS
+    CORS --> RATE
+    RATE --> WAF
+    WAF --> JWT
+    
+    JWT -->|Valid Token| RBAC
+    JWT -->|Invalid| REJECT[Reject 401]
+    
+    RBAC -->|Authorized| API
+    RBAC -->|Unauthorized| REJECT2[Reject 403]
+    
+    API --> VALIDATION
+    VALIDATION --> SANITIZATION
+    SANITIZATION --> ENCRYPTION
+    ENCRYPTION --> DB
+    
+    style REJECT fill:#E74C3C
+    style REJECT2 fill:#E74C3C
+    style DB fill:#2ECC71
+
+[END MERMAID CODE]
+
+
+================================================================================
+
+SUMMARY: SECTION 9 - SECURITY & PRIVACY
+================================================================================
+
+9.1 Authentication & Authorization
+- JWT-based authentication (HS256, 256-bit secret)
+- Access tokens (24h) + Refresh tokens (30 days)
+- Token revocation via Redis blacklist
+- bcrypt password hashing (cost factor 12)
+- Password policy enforcement
+- Role-Based Access Control (USER, ADMIN)
+
+9.2 Data Protection
+- Encryption at rest (PostgreSQL TDE)
+- Encryption in transit (HTTPS/TLS 1.3)
+- Application-level encryption (Fernet)
+- Minimal data collection
+- User data isolation (row-level security)
+- Data retention policies
+- GDPR-compliant deletion
+
+9.3 API Security
+- Rate limiting (10-1000 req/min depending on endpoint)
+- Input validation with Pydantic
+- SQL injection prevention (ORM)
+- CORS configuration
+- Security headers (X-Frame-Options, CSP, etc.)
+
+9.4 Secrets Management
+- Environment variables for config
+- No secrets in code
+- Production: Cloud secret managers
+
+9.5 Vulnerability Prevention
+- Common vulnerabilities table with mitigations
+- Security best practices
+- Error handling (generic messages to users)
+
+9.6 Compliance & Standards
+- GDPR compliance features
+- Data export capability
+- Data anonymization for analytics
+
+1 Mermaid Diagram:
+- Complete security architecture
+
+================================================================================
+
+SECTION 9 - COMPLETE! ✅

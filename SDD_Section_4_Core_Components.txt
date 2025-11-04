@@ -1,0 +1,1563 @@
+================================================================================
+                    SYSTEM DESIGN DOCUMENT - SECTION 4
+                        CORE COMPONENTS DESIGN
+================================================================================
+
+4.1 QUERY ROUTER AGENT
+--------------------------------------------------------------------------------
+
+PURPOSE: Understand user intent and route to appropriate specialist agent
+
+RESPONSIBILITY: "Traffic Controller of the System"
+
+The Query Router is the FIRST agent that processes every user query.
+Its job is to understand WHAT the user wants and WHO should handle it.
+
+
+4.1.1 DESIGN OVERVIEW
+--------------------------------------------------------------------------------
+
+CLASSIFICATION TASK: Map user query → Intent category → Target agent
+
+INPUT:
+- User query (text)
+- Conversation history (optional)
+- User profile (experience level)
+
+OUTPUT:
+- Intent classification (educational/market_data/portfolio/general)
+- Confidence score (0-1)
+- Recommended agent(s)
+- Reasoning for decision
+
+DSPY SIGNATURE:
+
+class QueryRouterSignature(dspy.Signature):
+    """Classify user query intent and route to appropriate agent"""
+    
+    # Inputs
+    user_query: str = dspy.InputField(
+        desc="The user's question or request"
+    )
+    user_level: str = dspy.InputField(
+        desc="User experience: beginner/intermediate/advanced"
+    )
+    conversation_context: str = dspy.InputField(
+        desc="Previous messages in conversation"
+    )
+    
+    # Outputs
+    intent: str = dspy.OutputField(
+        desc="Intent category: educational/market_data/portfolio_building/general"
+    )
+    confidence: float = dspy.OutputField(
+        desc="Confidence score 0-1"
+    )
+    target_agent: str = dspy.OutputField(
+        desc="Which agent should handle: educational_agent/market_agent/portfolio_agent"
+    )
+    reasoning: str = dspy.OutputField(
+        desc="Step-by-step reasoning for classification"
+    )
+
+
+4.1.2 INTENT CATEGORIES
+--------------------------------------------------------------------------------
+
+The router classifies queries into 6 PRIMARY INTENTS:
+
+1. EDUCATIONAL
+   - Explaining financial concepts
+   - Defining terms (P/E ratio, mutual funds, etc.)
+   - Teaching investment principles
+   
+   Examples:
+   ✓ "What is a mutual fund?"
+   ✓ "Explain compound interest"
+   ✓ "How do bonds work?"
+   
+   Routes to: Educational Agent
+
+2. MARKET_DATA
+   - Current stock prices
+   - Company fundamentals
+   - Market trends and analysis
+   
+   Examples:
+   ✓ "What is the price of Apple stock?"
+   ✓ "Show me HDFC Bank financials"
+   ✓ "Is Tesla overvalued?"
+   
+   Routes to: Market Data Agent
+
+3. PORTFOLIO_BUILDING
+   - Investment recommendations
+   - Portfolio allocation
+   - Risk-based suggestions
+   
+   Examples:
+   ✓ "Build me a portfolio"
+   ✓ "What stocks should I buy?"
+   ✓ "Suggest investments for moderate risk"
+   
+   Routes to: Portfolio Builder Agent
+
+4. PORTFOLIO_ANALYSIS
+   - Analyzing existing portfolios
+   - Performance evaluation
+   - Rebalancing suggestions
+   
+   Examples:
+   ✓ "Analyze my current investments"
+   ✓ "Is my portfolio diversified?"
+   ✓ "Should I rebalance?"
+   
+   Routes to: Portfolio Builder Agent (analysis mode)
+
+5. COMPARISON
+   - Stock vs stock comparisons
+   - Sector comparisons
+   - Investment option comparisons
+   
+   Examples:
+   ✓ "Compare Apple vs Microsoft"
+   ✓ "IT sector vs Banking sector"
+   ✓ "Stocks vs mutual funds"
+   
+   Routes to: Multiple agents (Market + Educational)
+
+6. GENERAL_QUERY
+   - Greetings, small talk
+   - System help
+   - Unclear intent
+   
+   Examples:
+   ✓ "Hello"
+   ✓ "What can you do?"
+   ✓ "Help me"
+   
+   Routes to: Query Router (handles directly)
+
+
+4.1.3 DECISION LOGIC
+--------------------------------------------------------------------------------
+
+STEP-BY-STEP ROUTING PROCESS:
+
+┌─────────────────────────────────────────────────────────────┐
+│  STEP 1: Keyword Detection                                  │
+│  Look for intent-specific keywords in query                 │
+├─────────────────────────────────────────────────────────────┤
+│  Educational: "what is", "explain", "how does", "define"    │
+│  Market Data: "price", "stock", "ticker", company names     │
+│  Portfolio: "build", "recommend", "invest", "portfolio"     │
+│  Comparison: "vs", "compare", "better", "difference"        │
+└─────────────────────────────────────────────────────────────┘
+                           ↓
+┌─────────────────────────────────────────────────────────────┐
+│  STEP 2: Context Analysis                                   │
+│  Check conversation history for context                     │
+├─────────────────────────────────────────────────────────────┤
+│  If previous query was about AAPL, "what about dividends?"  │
+│  → Market Data intent (context: AAPL)                       │
+└─────────────────────────────────────────────────────────────┘
+                           ↓
+┌─────────────────────────────────────────────────────────────┐
+│  STEP 3: LLM-Based Classification                           │
+│  Use DSPy + Gemini for semantic understanding               │
+├─────────────────────────────────────────────────────────────┤
+│  Prompt: "Classify the intent of: [user query]              │
+│           Consider: [context], User level: [beginner]"      │
+│  Output: Intent + Confidence + Reasoning                    │
+└─────────────────────────────────────────────────────────────┘
+                           ↓
+┌─────────────────────────────────────────────────────────────┐
+│  STEP 4: Confidence Thresholding                            │
+│  If confidence >= 0.7: Route to single agent                │
+│  If confidence < 0.7: Route to multiple agents              │
+│  If confidence < 0.4: Ask clarifying question               │
+└─────────────────────────────────────────────────────────────┘
+                           ↓
+┌─────────────────────────────────────────────────────────────┐
+│  STEP 5: Agent Selection                                    │
+│  Return: [agent_name, confidence, reasoning]                │
+└─────────────────────────────────────────────────────────────┘
+
+
+EXAMPLE CLASSIFICATION:
+
+Query: "Should I invest in Apple stock?"
+
+Step 1: Keywords detected
+  - "invest" → Portfolio intent
+  - "Apple stock" → Market data intent
+  → Ambiguous! Proceed to Step 2
+
+Step 2: Context analysis
+  - No prior conversation
+  - User level: beginner
+  → Need more analysis
+
+Step 3: LLM classification
+  Prompt to Gemini:
+    "User asks: 'Should I invest in Apple stock?'
+     User level: beginner
+     Intent options: educational/market_data/portfolio_building
+     Classify the intent and explain reasoning."
+  
+  LLM Response:
+    Intent: portfolio_building
+    Confidence: 0.85
+    Reasoning: "User is asking for investment advice (should I invest).
+                They need both market data about Apple AND portfolio
+                recommendation. Primary intent is portfolio building
+                with market data as supporting information."
+
+Step 4: Confidence check
+  - 0.85 >= 0.7 → High confidence
+  → Route to single agent with support
+
+Step 5: Agent selection
+  Primary: Portfolio Builder Agent
+  Secondary: Market Data Agent (to fetch Apple data)
+  Return: ["portfolio_builder", "market_data"]
+
+
+4.1.4 IMPLEMENTATION DETAILS
+--------------------------------------------------------------------------------
+
+PYTHON IMPLEMENTATION (Simplified):
+
+class QueryRouter:
+    def __init__(self, llm):
+        self.llm = llm
+        self.intent_predictor = dspy.Predict(QueryRouterSignature)
+    
+    def route(self, user_query, user_profile, context):
+        # Step 1: Quick keyword check
+        quick_intent = self._keyword_match(user_query)
+        
+        # Step 2: LLM-based classification
+        result = self.intent_predictor(
+            user_query=user_query,
+            user_level=user_profile.get('user_type', 'beginner'),
+            conversation_context=context
+        )
+        
+        # Step 3: Confidence thresholding
+        if result.confidence >= 0.7:
+            return {
+                'agents': [result.target_agent],
+                'intent': result.intent,
+                'confidence': result.confidence,
+                'reasoning': result.reasoning
+            }
+        elif result.confidence >= 0.4:
+            # Multiple agents for complex query
+            agents = self._select_multiple_agents(result.intent)
+            return {
+                'agents': agents,
+                'intent': result.intent,
+                'confidence': result.confidence,
+                'reasoning': result.reasoning
+            }
+        else:
+            # Low confidence - ask clarification
+            return {
+                'agents': ['query_router'],  # Handle clarification
+                'intent': 'clarification_needed',
+                'confidence': result.confidence,
+                'clarifying_question': self._generate_clarification(user_query)
+            }
+
+
+KEYWORD PATTERNS:
+
+EDUCATIONAL_KEYWORDS = [
+    "what is", "what are", "explain", "how does", "how do",
+    "define", "meaning of", "tell me about", "teach me",
+    "difference between", "basics of"
+]
+
+MARKET_DATA_KEYWORDS = [
+    "price", "stock", "ticker", "market cap", "pe ratio",
+    "fundamental", "technical", "chart", "volume",
+    "52 week", "dividend", "earnings"
+]
+
+PORTFOLIO_KEYWORDS = [
+    "invest", "portfolio", "recommend", "suggest", "allocate",
+    "build", "diversify", "risk", "return", "stocks to buy"
+]
+
+COMPARISON_KEYWORDS = [
+    "vs", "versus", "compare", "better", "difference between",
+    "which is", "or", "best"
+]
+
+
+4.1.5 ERROR HANDLING
+--------------------------------------------------------------------------------
+
+EDGE CASES:
+
+1. AMBIGUOUS QUERIES
+   Query: "Apple"
+   Problem: Is this about Apple (fruit) or Apple Inc (stock)?
+   Solution: Check context → If finance context, assume AAPL
+            Otherwise, ask: "Do you mean Apple Inc (AAPL) stock?"
+
+2. MULTI-INTENT QUERIES
+   Query: "Explain mutual funds and build me a portfolio"
+   Problem: Two separate intents
+   Solution: Route to BOTH educational and portfolio agents
+            Synthesize responses in sequence
+
+3. OUT-OF-SCOPE QUERIES
+   Query: "What's the weather today?"
+   Problem: Not financial
+   Solution: Politely redirect: "I specialize in financial advice.
+            For weather, try a weather app. How can I help with
+            your investments?"
+
+4. GIBBERISH/UNCLEAR
+   Query: "asdkjfh stocks lkjsdf"
+   Problem: Unintelligible
+   Solution: "I couldn't understand your question. Could you
+            please rephrase? For example: 'What is a stock?'"
+
+
+4.1.6 PERFORMANCE METRICS
+--------------------------------------------------------------------------------
+
+MEASURED METRICS:
+
+1. Classification Accuracy
+   - Target: 90%+ correct routing
+   - Measured: Manual review of 100 sample queries
+
+2. Confidence Calibration
+   - High confidence (>0.7) should be 95%+ accurate
+   - Low confidence (<0.4) should trigger clarification
+
+3. Latency
+   - Target: <500ms for routing decision
+   - Actual: ~200-300ms (keyword + LLM call)
+
+4. Multi-Agent Coordination
+   - Complex queries handled by 2+ agents
+   - Success rate: 85%+
+
+
+--- DIAGRAM 4.1: QUERY ROUTER FLOW ---
+
+[MERMAID CODE - Copy this to Mermaid Live Editor]
+
+graph TD
+    START[User Query] --> KEYWORD[Keyword Detection]
+    KEYWORD --> CONTEXT[Context Analysis]
+    CONTEXT --> LLM[LLM Classification]
+    
+    LLM --> CONF{Confidence Check}
+    
+    CONF -->|>= 0.7| SINGLE[Route to Single Agent]
+    CONF -->|0.4-0.7| MULTI[Route to Multiple Agents]
+    CONF -->|< 0.4| CLARIFY[Ask Clarifying Question]
+    
+    SINGLE --> EDU[Educational Agent]
+    SINGLE --> MKT[Market Data Agent]
+    SINGLE --> PORT[Portfolio Agent]
+    
+    MULTI --> ORCH[Send to Orchestrator]
+    ORCH --> PARALLEL[Parallel Execution]
+    
+    CLARIFY --> USER_RESP[Wait for User Response]
+    USER_RESP --> START
+    
+    style CONF fill:#FF6B6B
+    style SINGLE fill:#4ECDC4
+    style MULTI fill:#45B7D1
+    style CLARIFY fill:#FFA07A
+
+[END MERMAID CODE]
+
+
+================================================================================
+
+4.2 EDUCATIONAL CONTENT AGENT
+--------------------------------------------------------------------------------
+
+PURPOSE: Explain financial concepts adaptively based on user expertise level
+
+RESPONSIBILITY: "The Patient Teacher"
+
+The Educational Agent transforms complex financial jargon into clear,
+understandable explanations tailored to the user's knowledge level.
+
+
+4.2.1 DESIGN OVERVIEW
+--------------------------------------------------------------------------------
+
+ADAPTIVE EXPLANATION TASK: Concept → User Level → Appropriate Explanation
+
+INPUT:
+- Financial concept/term to explain
+- User experience level (beginner/intermediate/advanced)
+- Optional: Specific aspect user wants to understand
+
+OUTPUT:
+- Clear explanation at appropriate level
+- Real-world examples
+- Related concepts to explore
+- Visual metaphors (when helpful)
+
+DSPY SIGNATURE:
+
+class EducationalAgentSignature(dspy.Signature):
+    """Explain financial concepts adaptively based on user level"""
+    
+    # Inputs
+    concept: str = dspy.InputField(
+        desc="Financial concept or term to explain"
+    )
+    user_level: str = dspy.InputField(
+        desc="User expertise: beginner/intermediate/advanced"
+    )
+    specific_aspect: str = dspy.InputField(
+        desc="Specific aspect user wants to know (optional)"
+    )
+    context: str = dspy.InputField(
+        desc="Why user is asking (context from conversation)"
+    )
+    
+    # Outputs
+    explanation: str = dspy.OutputField(
+        desc="Clear explanation at appropriate level"
+    )
+    examples: list[str] = dspy.OutputField(
+        desc="Real-world examples (2-3)"
+    )
+    key_points: list[str] = dspy.OutputField(
+        desc="Main takeaways (3-5 bullet points)"
+    )
+    related_concepts: list[str] = dspy.OutputField(
+        desc="Related topics to explore next"
+    )
+    visual_metaphor: str = dspy.OutputField(
+        desc="Analogy or metaphor to aid understanding"
+    )
+
+
+4.2.2 ADAPTIVE EXPLANATION STRATEGY
+--------------------------------------------------------------------------------
+
+THREE-TIER EXPLANATION APPROACH:
+
+┌────────────────────────────────────────────────────────────┐
+│  BEGINNER LEVEL                                            │
+├────────────────────────────────────────────────────────────┤
+│  • Simple language, no jargon                              │
+│  • Everyday analogies and metaphors                        │
+│  • Step-by-step explanations                               │
+│  • Focus on "what" and "why"                               │
+│  • Real-life examples from daily experience                │
+│                                                            │
+│  Example - "What is a stock?"                              │
+│  "A stock is like owning a small piece of a company.       │
+│   Imagine a pizza cut into 100 slices. If you buy 10       │
+│   slices, you own 10% of the pizza. Similarly, when you    │
+│   buy stocks, you own a small part of that company."       │
+└────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────┐
+│  INTERMEDIATE LEVEL                                        │
+├────────────────────────────────────────────────────────────┤
+│  • Introduce financial terminology                         │
+│  • Explain underlying mechanisms                           │
+│  • Compare different options                               │
+│  • Focus on "how" and "when"                               │
+│  • Market-specific examples                                │
+│                                                            │
+│  Example - "What is a stock?"                              │
+│  "A stock represents equity ownership in a corporation.    │
+│   When you buy shares, you become a shareholder with       │
+│   voting rights and dividend eligibility. Stock prices     │
+│   fluctuate based on supply/demand and company             │
+│   performance. You can profit through capital appreciation │
+│   or dividends."                                           │
+└────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────┐
+│  ADVANCED LEVEL                                            │
+├────────────────────────────────────────────────────────────┤
+│  • Technical depth and nuance                              │
+│  • Financial formulas and metrics                          │
+│  • Market dynamics and theories                            │
+│  • Focus on "optimization" and "strategy"                  │
+│  • Case studies and academic research                      │
+│                                                            │
+│  Example - "What is a stock?"                              │
+│  "Equities represent fractional ownership with residual    │
+│   claims on assets and earnings. Valuation models (DDM,    │
+│   DCF, comparables) estimate intrinsic value. Market       │
+│   efficiency, behavioral factors, and macroeconomic        │
+│   indicators drive price discovery. Consider beta, alpha,  │
+│   and risk-adjusted returns in portfolio construction."    │
+└────────────────────────────────────────────────────────────┘
+
+
+4.2.3 KNOWLEDGE BASE
+--------------------------------------------------------------------------------
+
+DATA SOURCE: 538 Financial Terms from Angel One Glossary
+
+STORAGE: PostgreSQL educational_content table with vector embeddings
+
+RETRIEVAL STRATEGY:
+
+1. EXACT MATCH SEARCH
+   - User asks: "What is P/E ratio?"
+   - SQL: SELECT * FROM educational_content 
+          WHERE LOWER(title) LIKE '%p/e ratio%'
+   - Fast, precise for known terms
+
+2. SEMANTIC SEARCH (RAG)
+   - User asks: "How do I value a company?"
+   - Generate query embedding
+   - Find similar content: "P/E ratio", "DCF valuation", "Book value"
+   - Combine multiple relevant pieces
+
+3. HIERARCHICAL LEARNING PATH
+   - Beginner asks: "Stock market basics"
+   - Provide learning sequence:
+     1. What is a stock?
+     2. How stock markets work
+     3. How to buy stocks
+     4. Risk and diversification
+     5. Building a portfolio
+
+EXAMPLE KNOWLEDGE ENTRIES:
+
+Topic: "Mutual Funds"
+Beginner: "A mutual fund pools money from many investors to buy a
+           diversified portfolio of stocks and bonds. Professional
+           managers handle investment decisions for you."
+           
+Intermediate: "Mutual funds offer diversification, professional
+               management, and liquidity. Types include equity funds,
+               debt funds, hybrid funds. Key metrics: NAV, expense
+               ratio, AUM, past performance."
+               
+Advanced: "Mutual funds provide economies of scale and risk
+           diversification per Modern Portfolio Theory. Evaluate
+           using Sharpe ratio, Treynor ratio, Jensen's alpha.
+           Consider tax efficiency, tracking error, and fund
+           manager tenure."
+
+
+4.2.4 EXPLANATION GENERATION PROCESS
+--------------------------------------------------------------------------------
+
+STEP-BY-STEP FLOW:
+
+┌──────────────────────────────────────────────────────────┐
+│  STEP 1: Retrieve Relevant Content                       │
+│  • Search educational_content table                      │
+│  • Use vector similarity if exact match not found        │
+│  • Retrieve top 3-5 relevant entries                     │
+└──────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────┐
+│  STEP 2: Determine Explanation Complexity                │
+│  • Check user_level from profile                         │
+│  • Adjust based on previous interactions                 │
+│  • Consider context (why they're asking)                 │
+└──────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────┐
+│  STEP 3: Generate Explanation (DSPy + LLM)               │
+│  • Use EducationalAgentSignature                         │
+│  • Provide context and retrieved content                 │
+│  • LLM generates explanation at appropriate level        │
+└──────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────┐
+│  STEP 4: Add Examples and Metaphors                      │
+│  • Include 2-3 real-world examples                       │
+│  • Add visual metaphor for abstract concepts             │
+│  • Provide Indian market context (NSE, BSE examples)     │
+└──────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────┐
+│  STEP 5: Suggest Related Learning                        │
+│  • Identify prerequisite concepts (if missing)           │
+│  • Suggest next topics to learn                          │
+│  • Create learning path                                  │
+└──────────────────────────────────────────────────────────┘
+
+
+EXAMPLE GENERATION:
+
+User Query: "What is compound interest?"
+User Level: Beginner
+
+Step 1: Retrieve content
+  - Found: "Compound Interest" in educational_content
+  - Related: "Simple Interest", "Time Value of Money"
+
+Step 2: Complexity
+  - User level: beginner
+  - Context: General learning (not specific investment)
+  - Strategy: Use simple language + visual example
+
+Step 3: Generate explanation
+  DSPy Prompt:
+    "Explain compound interest to a beginner.
+     Focus on: what it is, how it works, why it matters.
+     Use simple language and real-world examples."
+  
+  LLM Output:
+    "Compound interest is when you earn interest not just on your
+     original money, but also on the interest you've already earned.
+     It's like a snowball rolling down a hill - it gets bigger and
+     bigger as it picks up more snow!"
+
+Step 4: Add examples
+  Example 1: "If you invest ₹10,000 at 10% annual compound interest:
+              Year 1: ₹10,000 + ₹1,000 = ₹11,000
+              Year 2: ₹11,000 + ₹1,100 = ₹12,100 (notice the extra ₹100!)
+              Year 3: ₹12,100 + ₹1,210 = ₹13,310"
+  
+  Example 2: "Albert Einstein called it the 'eighth wonder of the world'
+              because it can turn small savings into large wealth over time."
+
+Step 5: Related concepts
+  - "Now that you understand compound interest, you might want to learn:
+     • Simple Interest vs Compound Interest
+     • Rule of 72 (quick way to estimate doubling time)
+     • Time value of money"
+
+
+4.2.5 PERSONALIZATION FEATURES
+--------------------------------------------------------------------------------
+
+ADAPTIVE LEARNING:
+
+1. TRACK USER PROGRESS
+   - Store which concepts user has learned
+   - Gradually increase explanation complexity
+   - Beginner who masters basics → Move to intermediate
+
+2. LEARNING PATH GENERATION
+   - User asks about "options trading"
+   - Check prerequisites: stocks, derivatives, risk
+   - If missing: Suggest learning order
+
+3. CONTEXTUALIZED EXPLANATIONS
+   - User building portfolio → Explain concepts in that context
+   - User comparing stocks → Frame explanation as comparison
+
+4. FEEDBACK LOOP
+   - "Was this explanation helpful?"
+   - "Too simple or too complex?"
+   - Adjust future explanations based on feedback
+
+
+INDIAN MARKET CONTEXT:
+
+All examples use:
+✓ Indian stocks (HDFC Bank, TCS, Reliance)
+✓ Indian currency (₹)
+✓ Indian exchanges (NSE, BSE)
+✓ Indian regulations (SEBI, mutual fund categories)
+
+Example:
+Instead of: "Like Apple stock on NASDAQ"
+We say: "Like TCS stock on NSE"
+
+
+4.2.6 TOOLS USED BY EDUCATIONAL AGENT
+--------------------------------------------------------------------------------
+
+LANGCHAIN TOOLS:
+
+1. search_educational_content()
+   - Searches educational_content table
+   - Vector similarity search
+   - Returns top K relevant pieces
+
+2. get_learning_path()
+   - Generates prerequisite chain
+   - Example: Options → Derivatives → Stocks → Markets
+
+3. generate_example()
+   - Creates contextual examples
+   - Uses current market data for relevance
+   - Indian market focus
+
+
+--- DIAGRAM 4.2: EDUCATIONAL AGENT FLOW ---
+
+[MERMAID CODE - Copy this to Mermaid Live Editor]
+
+graph TD
+    START[User Asks Concept] --> LEVEL{User Level?}
+    
+    LEVEL -->|Beginner| BEG[Simple Language<br/>Analogies<br/>Basic Examples]
+    LEVEL -->|Intermediate| INT[Technical Terms<br/>Mechanisms<br/>Market Examples]
+    LEVEL -->|Advanced| ADV[Deep Analysis<br/>Formulas<br/>Case Studies]
+    
+    BEG --> RETRIEVE[Retrieve Content from DB]
+    INT --> RETRIEVE
+    ADV --> RETRIEVE
+    
+    RETRIEVE --> CONTEXT[Add Indian Market Context]
+    CONTEXT --> EXAMPLES[Generate 2-3 Examples]
+    EXAMPLES --> METAPHOR[Add Visual Metaphor]
+    METAPHOR --> RELATED[Suggest Related Topics]
+    
+    RELATED --> RESPONSE[Final Explanation]
+    
+    RESPONSE --> FEEDBACK{User Feedback}
+    FEEDBACK -->|Too Simple| UP[Increase Level]
+    FEEDBACK -->|Too Complex| DOWN[Decrease Level]
+    FEEDBACK -->|Just Right| TRACK[Track Progress]
+    
+    UP --> UPDATE[Update User Profile]
+    DOWN --> UPDATE
+    TRACK --> UPDATE
+    
+    style LEVEL fill:#FF6B6B
+    style BEG fill:#98D8C8
+    style INT fill:#F7DC6F
+    style ADV fill:#BB8FCE
+    style RESPONSE fill:#4ECDC4
+
+[END MERMAID CODE]
+
+
+================================================================================
+
+4.3 MARKET DATA AGENT
+--------------------------------------------------------------------------------
+
+PURPOSE: Fetch, interpret, and present real-time market data and analysis
+
+RESPONSIBILITY: "The Market Analyst"
+
+The Market Data Agent connects to external APIs (Yahoo Finance) to provide
+accurate, up-to-date information about stocks, indices, and market conditions.
+
+
+4.3.1 DESIGN OVERVIEW
+--------------------------------------------------------------------------------
+
+DATA RETRIEVAL + ANALYSIS TASK: Stock Symbol → Comprehensive Market Analysis
+
+INPUT:
+- Stock symbol (e.g., "AAPL", "HDFCBANK.NS")
+- Analysis type (price/fundamentals/technical/news)
+- Time range (day/week/month/year)
+
+OUTPUT:
+- Current price and change
+- Fundamental metrics (P/E, market cap, etc.)
+- Technical indicators (RSI, moving averages)
+- Recent news and sentiment
+- Interpretation and recommendation
+
+DSPY SIGNATURE:
+
+class MarketDataAgentSignature(dspy.Signature):
+    """Fetch and analyze market data for stocks"""
+    
+    # Inputs
+    stock_symbol: str = dspy.InputField(
+        desc="Stock ticker symbol (e.g., AAPL, HDFCBANK.NS)"
+    )
+    analysis_type: str = dspy.InputField(
+        desc="Type of analysis: price/fundamentals/technical/news/all"
+    )
+    user_query: str = dspy.InputField(
+        desc="Original user question for context"
+    )
+    
+    # Outputs
+    price_data: dict = dspy.OutputField(
+        desc="Current price, change, volume, 52-week range"
+    )
+    fundamentals: dict = dspy.OutputField(
+        desc="P/E ratio, market cap, dividend yield, EPS"
+    )
+    technical_analysis: dict = dspy.OutputField(
+        desc="RSI, moving averages, support/resistance levels"
+    )
+    interpretation: str = dspy.OutputField(
+        desc="Plain English interpretation of the data"
+    )
+    recommendation: str = dspy.OutputField(
+        desc="Buy/Hold/Sell with reasoning (educational, not advice)"
+    )
+
+
+4.3.2 DATA SOURCES
+--------------------------------------------------------------------------------
+
+PRIMARY: Yahoo Finance API (via yfinance library)
+
+ADVANTAGES:
+✓ Free, no API key required
+✓ Comprehensive data (price, fundamentals, news)
+✓ Global coverage (US + Indian markets)
+✓ Real-time (15-20 min delay for free tier)
+✓ Historical data available
+
+LIMITATIONS:
+✗ 15-20 minute delay (not truly real-time)
+✗ Rate limits (~2000 requests/hour)
+✗ Occasional data quality issues
+✗ Limited to public market data
+
+INDIAN STOCK SYMBOLS:
+- Add ".NS" for NSE: HDFCBANK.NS, TCS.NS, RELIANCE.NS
+- Add ".BO" for BSE: HDFCBANK.BO, TCS.BO
+
+
+SECONDARY: DuckDuckGo Search (for news)
+
+Used when Yahoo Finance news insufficient
+No API key required
+Searches: "[Stock name] stock news latest"
+
+
+4.3.3 DATA RETRIEVAL ARCHITECTURE
+--------------------------------------------------------------------------------
+
+LAYERED CACHING STRATEGY:
+
+┌────────────────────────────────────────────────────────┐
+│  Layer 1: In-Memory Cache (5 minutes)                  │
+│  • Fastest, but temporary                              │
+│  • Stores recent queries                               │
+│  • Reduces API calls for repeated queries              │
+└────────────────────────────────────────────────────────┘
+                         ↓ (if miss)
+┌────────────────────────────────────────────────────────┐
+│  Layer 2: Database Cache (1 hour)                      │
+│  • Stores in messages table                            │
+│  • Includes response_data field                        │
+│  • Enables historical analysis                         │
+└────────────────────────────────────────────────────────┘
+                         ↓ (if miss)
+┌────────────────────────────────────────────────────────┐
+│  Layer 3: Yahoo Finance API                            │
+│  • Fresh data from source                              │
+│  • ~200-500ms latency                                  │
+│  • Subject to rate limits                              │
+└────────────────────────────────────────────────────────┘
+
+
+IMPLEMENTATION:
+
+class DataSourcesManager:
+    def __init__(self):
+        self.cache = {}  # In-memory cache
+        self.cache_duration = 300  # 5 minutes
+    
+    async def get_stock_data(self, symbol: str) -> dict:
+        # Check in-memory cache
+        cache_key = f"stock_{symbol}"
+        if cache_key in self.cache:
+            data, timestamp = self.cache[cache_key]
+            if time.time() - timestamp < self.cache_duration:
+                return data  # Cache hit!
+        
+        # Fetch from Yahoo Finance
+        try:
+            ticker = yfinance.Ticker(symbol)
+            info = ticker.info
+            history = ticker.history(period="1d")
+            
+            # Extract relevant data
+            data = {
+                "symbol": symbol,
+                "name": info.get("longName", symbol),
+                "price": history["Close"].iloc[-1],
+                "change": info.get("regularMarketChange", 0),
+                "change_percent": info.get("regularMarketChangePercent", 0),
+                "volume": info.get("volume", 0),
+                "market_cap": info.get("marketCap", 0),
+                "pe_ratio": info.get("trailingPE", None),
+                "dividend_yield": info.get("dividendYield", 0),
+                "52_week_high": info.get("fiftyTwoWeekHigh", 0),
+                "52_week_low": info.get("fiftyTwoWeekLow", 0),
+                "beta": info.get("beta", None),
+                "eps": info.get("trailingEps", None),
+            }
+            
+            # Cache the result
+            self.cache[cache_key] = (data, time.time())
+            return data
+            
+        except Exception as e:
+            logger.error(f"Error fetching {symbol}: {e}")
+            return {"error": str(e)}
+
+
+4.3.4 TECHNICAL INDICATORS CALCULATION
+--------------------------------------------------------------------------------
+
+CALCULATED INDICATORS:
+
+1. RSI (Relative Strength Index)
+   - Measures overbought/oversold conditions
+   - Range: 0-100
+   - Overbought: RSI > 70
+   - Oversold: RSI < 30
+   
+   Formula:
+   RSI = 100 - [100 / (1 + RS)]
+   where RS = Average Gain / Average Loss (14 periods)
+
+2. MOVING AVERAGES
+   - SMA 20 (20-day Simple Moving Average)
+   - SMA 50 (50-day)
+   - SMA 200 (200-day)
+   
+   Signals:
+   • Price > SMA 200 → Bullish trend
+   • Price < SMA 200 → Bearish trend
+   • SMA 50 crosses above SMA 200 → Golden Cross (buy signal)
+   • SMA 50 crosses below SMA 200 → Death Cross (sell signal)
+
+3. SUPPORT AND RESISTANCE
+   - Support: 52-week low, recent lows
+   - Resistance: 52-week high, recent highs
+
+IMPLEMENTATION:
+
+def calculate_rsi(prices: pd.Series, period: int = 14) -> float:
+    """Calculate Relative Strength Index"""
+    delta = prices.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi.iloc[-1]
+
+def calculate_moving_averages(symbol: str) -> dict:
+    """Calculate multiple moving averages"""
+    ticker = yfinance.Ticker(symbol)
+    history = ticker.history(period="1y")
+    
+    return {
+        "sma_20": history["Close"].rolling(window=20).mean().iloc[-1],
+        "sma_50": history["Close"].rolling(window=50).mean().iloc[-1],
+        "sma_200": history["Close"].rolling(window=200).mean().iloc[-1],
+        "current_price": history["Close"].iloc[-1]
+    }
+
+
+4.3.5 INTERPRETATION LOGIC
+--------------------------------------------------------------------------------
+
+MULTI-FACTOR ANALYSIS:
+
+The Market Data Agent doesn't just show raw numbers - it INTERPRETS them.
+
+┌────────────────────────────────────────────────────────┐
+│  FACTOR 1: Valuation (P/E Ratio Analysis)              │
+├────────────────────────────────────────────────────────┤
+│  P/E < 15:  Potentially undervalued                    │
+│  P/E 15-25: Fairly valued (market average)             │
+│  P/E > 25:  Potentially overvalued or growth stock     │
+│  P/E > 50:  High growth expectations or bubble         │
+└────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────┐
+│  FACTOR 2: Technical Indicators                        │
+├────────────────────────────────────────────────────────┤
+│  RSI > 70:       Overbought, possible correction       │
+│  RSI < 30:       Oversold, possible bounce             │
+│  Price > SMA200: Bullish long-term trend               │
+│  Price < SMA200: Bearish long-term trend               │
+└────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────┐
+│  FACTOR 3: Momentum                                    │
+├────────────────────────────────────────────────────────┤
+│  52-week high:   Strong momentum, possible continuation│
+│  52-week low:    Weak momentum, high risk              │
+│  Mid-range:      Neutral momentum                      │
+└────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────┐
+│  FACTOR 4: Volatility (Beta)                           │
+├────────────────────────────────────────────────────────┤
+│  Beta < 1:   Less volatile than market (safer)         │
+│  Beta = 1:   Moves with market                         │
+│  Beta > 1:   More volatile than market (riskier)       │
+└────────────────────────────────────────────────────────┘
+
+
+EXAMPLE INTERPRETATION:
+
+Stock: HDFCBANK.NS
+Price: ₹1,550
+P/E Ratio: 18.5
+RSI: 45
+Price vs SMA200: 3% above
+Beta: 0.95
+52-week: Mid-range
+
+Interpretation Generated:
+"HDFC Bank is currently trading at ₹1,550, which is fairly valued with
+ a P/E ratio of 18.5 (close to banking sector average). The RSI of 45
+ indicates neutral momentum - neither overbought nor oversold. The stock
+ is trading 3% above its 200-day moving average, suggesting a mildly
+ bullish trend. With a beta of 0.95, it's slightly less volatile than
+ the overall market, making it a relatively stable banking stock.
+ Currently in the middle of its 52-week range, showing balanced sentiment."
+
+Recommendation:
+"For long-term investors: HOLD or consider buying on dips. The stock
+ shows stable fundamentals without being overextended. For short-term
+ traders: Wait for clearer signals (RSI moving towards 30 for buy or
+ 70 for sell)."
+
+DISCLAIMER:
+"This is educational analysis only, not financial advice. Always do your
+ own research and consult a certified financial advisor before investing."
+
+
+4.3.6 ERROR HANDLING
+--------------------------------------------------------------------------------
+
+COMMON ERRORS:
+
+1. INVALID SYMBOL
+   Input: "APPL" (typo for AAPL)
+   Detection: yfinance returns empty info dict
+   Response: "I couldn't find stock symbol 'APPL'. Did you mean 'AAPL'
+             (Apple Inc)? Please check the symbol and try again."
+
+2. API RATE LIMIT
+   Error: Too many requests to Yahoo Finance
+   Response: "I'm experiencing high demand right now. Please wait a
+             moment and try again."
+   Fallback: Serve from database cache (even if older than 1 hour)
+
+3. DATA UNAVAILABLE
+   Input: Private company or delisted stock
+   Response: "This stock is not publicly traded or data is unavailable.
+             I can only provide information on publicly listed stocks."
+
+4. NETWORK ERROR
+   Error: No internet connection or Yahoo Finance down
+   Response: "I'm having trouble connecting to market data services.
+             Please check your connection and try again."
+   Fallback: Serve stale cache with warning
+
+
+--- DIAGRAM 4.3: MARKET DATA AGENT FLOW ---
+
+[MERMAID CODE - Copy this to Mermaid Live Editor]
+
+graph TD
+    START[User Asks About Stock] --> PARSE[Parse Stock Symbol]
+    PARSE --> CACHE{Check Cache}
+    
+    CACHE -->|Hit| RETURN_CACHE[Return Cached Data]
+    CACHE -->|Miss| FETCH[Fetch from Yahoo Finance]
+    
+    FETCH --> VALIDATE{Data Valid?}
+    VALIDATE -->|No| ERROR[Handle Error]
+    VALIDATE -->|Yes| CALC[Calculate Technical Indicators]
+    
+    CALC --> INTERPRET[Generate Interpretation]
+    INTERPRET --> RECOMMEND[Generate Recommendation]
+    RECOMMEND --> STORE[Store in Cache + DB]
+    
+    STORE --> FORMAT[Format Response]
+    RETURN_CACHE --> FORMAT
+    
+    FORMAT --> RESPONSE[Return to User]
+    
+    ERROR --> SUGGEST[Suggest Alternatives]
+    SUGGEST --> RESPONSE
+    
+    style CACHE fill:#FF6B6B
+    style FETCH fill:#4ECDC4
+    style INTERPRET fill:#F7DC6F
+    style RECOMMEND fill:#BB8FCE
+    style ERROR fill:#E74C3C
+
+[END MERMAID CODE]
+
+
+================================================================================
+
+4.4 PORTFOLIO BUILDER AGENT
+--------------------------------------------------------------------------------
+
+PURPOSE: Generate diversified investment portfolios based on risk profile
+
+RESPONSIBILITY: "The Investment Strategist"
+
+The Portfolio Builder Agent creates personalized stock portfolios that match
+the user's risk tolerance, investment amount, and financial goals.
+
+
+4.4.1 DESIGN OVERVIEW
+--------------------------------------------------------------------------------
+
+PORTFOLIO GENERATION TASK: Risk Profile + Goals → Diversified Portfolio
+
+INPUT:
+- Risk tolerance (low/moderate/high)
+- Investment amount (optional)
+- Financial goals (retirement/wealth/income)
+- Time horizon (short/medium/long term)
+- Sector preferences (optional)
+
+OUTPUT:
+- List of stocks with allocation percentages
+- Sector distribution
+- Expected return and risk metrics
+- Diversification score
+- Rationale for each selection
+
+DSPY SIGNATURE:
+
+class PortfolioBuilderSignature(dspy.Signature):
+    """Generate diversified portfolio based on risk profile"""
+    
+    # Inputs
+    risk_tolerance: str = dspy.InputField(
+        desc="Risk level: low/moderate/high"
+    )
+    investment_amount: float = dspy.InputField(
+        desc="Amount to invest (in rupees)"
+    )
+    investment_goal: str = dspy.InputField(
+        desc="Goal: retirement/wealth_creation/income_generation"
+    )
+    time_horizon: str = dspy.InputField(
+        desc="Time horizon: short_term/medium_term/long_term"
+    )
+    
+    # Outputs
+    portfolio_stocks: list[dict] = dspy.OutputField(
+        desc="List of stocks with allocation: [{symbol, name, weight, rationale}]"
+    )
+    sector_distribution: dict = dspy.OutputField(
+        desc="Percentage allocation by sector"
+    )
+    expected_return: float = dspy.OutputField(
+        desc="Expected annual return (%)"
+    )
+    risk_score: float = dspy.OutputField(
+        desc="Portfolio risk score 1-10"
+    )
+    diversification_score: float = dspy.OutputField(
+        desc="Diversification quality 0-1"
+    )
+    strategy_explanation: str = dspy.OutputField(
+        desc="Why this portfolio matches user's profile"
+    )
+
+
+4.4.2 STOCK UNIVERSE
+--------------------------------------------------------------------------------
+
+CURATED STOCK LIST: Top Indian stocks across sectors
+
+Our portfolio builder selects from a pre-vetted universe of quality stocks:
+
+BANKING & FINANCIAL (8 stocks):
+- HDFCBANK.NS - HDFC Bank
+- ICICIBANK.NS - ICICI Bank
+- SBIN.NS - State Bank of India
+- AXISBANK.NS - Axis Bank
+- KOTAKBANK.NS - Kotak Mahindra Bank
+- BAJFINANCE.NS - Bajaj Finance
+- BAJAJFINSV.NS - Bajaj Finserv
+- HDFCLIFE.NS - HDFC Life Insurance
+
+IT SERVICES (6 stocks):
+- TCS.NS - Tata Consultancy Services
+- INFY.NS - Infosys
+- WIPRO.NS - Wipro
+- HCLTECH.NS - HCL Technologies
+- TECHM.NS - Tech Mahindra
+- LTI.NS - L&T Infotech
+
+FMCG (5 stocks):
+- HINDUNILVR.NS - Hindustan Unilever
+- ITC.NS - ITC Limited
+- NESTLEIND.NS - Nestle India
+- BRITANNIA.NS - Britannia Industries
+- DABUR.NS - Dabur India
+
+ENERGY & UTILITIES (4 stocks):
+- RELIANCE.NS - Reliance Industries
+- ONGC.NS - Oil and Natural Gas Corp
+- NTPC.NS - NTPC Limited
+- POWERGRID.NS - Power Grid Corporation
+
+PHARMACEUTICALS (4 stocks):
+- SUNPHARMA.NS - Sun Pharmaceutical
+- DRREDDY.NS - Dr. Reddy's Laboratories
+- CIPLA.NS - Cipla
+- DIVISLAB.NS - Divi's Laboratories
+
+AUTO & ANCILLARIES (4 stocks):
+- MARUTI.NS - Maruti Suzuki
+- TATAMOTORS.NS - Tata Motors
+- HEROMOTOCO.NS - Hero MotoCorp
+- BAJAJ-AUTO.NS - Bajaj Auto
+
+TOTAL: 31 stocks across 6 major sectors
+
+
+SELECTION CRITERIA:
+✓ Large-cap stocks (market cap > ₹10,000 crore)
+✓ High liquidity (average daily volume > 1 lakh shares)
+✓ Consistent profitability (profitable for last 5 years)
+✓ Listed on NSE
+✓ Part of Nifty 50 or Nifty Next 50
+
+
+4.4.3 PORTFOLIO ALLOCATION STRATEGIES
+--------------------------------------------------------------------------------
+
+THREE ALLOCATION METHODS:
+
+┌────────────────────────────────────────────────────────┐
+│  METHOD 1: EQUAL WEIGHT (Default for MVP)              │
+├────────────────────────────────────────────────────────┤
+│  • All stocks get equal allocation                     │
+│  • Simple, easy to understand                          │
+│  • Good for beginners                                  │
+│                                                        │
+│  Example (5 stocks):                                   │
+│  HDFCBANK: 20%, TCS: 20%, RELIANCE: 20%,              │
+│  SUNPHARMA: 20%, MARUTI: 20%                           │
+└────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────┐
+│  METHOD 2: RISK PARITY (Future Enhancement)            │
+├────────────────────────────────────────────────────────┤
+│  • Allocate based on volatility                        │
+│  • Lower volatility stocks get higher weight           │
+│  • Balances risk contribution                          │
+│                                                        │
+│  Example:                                              │
+│  HDFCBANK (low volatility): 25%                        │
+│  TCS (low volatility): 25%                             │
+│  RELIANCE (medium volatility): 20%                     │
+│  TATAMOTORS (high volatility): 15%                     │
+│  SUNPHARMA (medium volatility): 15%                    │
+└────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────┐
+│  METHOD 3: MEAN-VARIANCE OPTIMIZATION (Future)         │
+├────────────────────────────────────────────────────────┤
+│  • Maximize return for given risk (Sharpe ratio)       │
+│  • Uses historical returns and covariance              │
+│  • Mathematically optimal (per Modern Portfolio Theory)│
+│                                                        │
+│  Requires: Historical price data, covariance matrix    │
+└────────────────────────────────────────────────────────┘
+
+
+4.4.4 RISK-BASED PORTFOLIO TEMPLATES
+--------------------------------------------------------------------------------
+
+LOW RISK PORTFOLIO:
+┌────────────────────────────────────────────────────────┐
+│  Target: Capital preservation + modest growth          │
+│  Expected Return: 8-12% annually                       │
+│  Volatility: Low                                       │
+├────────────────────────────────────────────────────────┤
+│  SECTOR ALLOCATION:                                    │
+│  • Banking & Financial: 40%                            │
+│  • FMCG: 30%                                           │
+│  • IT Services: 20%                                    │
+│  • Energy: 10%                                         │
+├────────────────────────────────────────────────────────┤
+│  EXAMPLE STOCKS (5-7 stocks):                          │
+│  • HDFCBANK.NS (15%) - Stable banking leader           │
+│  • ICICIBANK.NS (15%) - Diversified bank               │
+│  • KOTAKBANK.NS (10%) - Quality private bank           │
+│  • HINDUNILVR.NS (15%) - Defensive FMCG                │
+│  • ITC.NS (15%) - Dividend-paying FMCG                 │
+│  • TCS.NS (15%) - IT services giant                    │
+│  • INFY.NS (10%) - Stable IT exporter                  │
+│  • NTPC.NS (5%) - Utility company                      │
+└────────────────────────────────────────────────────────┘
+
+MODERATE RISK PORTFOLIO:
+┌────────────────────────────────────────────────────────┐
+│  Target: Balanced growth with manageable risk          │
+│  Expected Return: 12-18% annually                      │
+│  Volatility: Medium                                    │
+├────────────────────────────────────────────────────────┤
+│  SECTOR ALLOCATION:                                    │
+│  • Banking & Financial: 30%                            │
+│  • IT Services: 25%                                    │
+│  • FMCG: 20%                                           │
+│  • Energy: 15%                                         │
+│  • Pharma: 10%                                         │
+├────────────────────────────────────────────────────────┤
+│  EXAMPLE STOCKS (8-10 stocks):                         │
+│  • HDFCBANK.NS (12%) - Banking sector                  │
+│  • ICICIBANK.NS (10%) - Banking diversification        │
+│  • BAJFINANCE.NS (8%) - Growth-oriented finance        │
+│  • TCS.NS (12%) - IT services leader                   │
+│  • INFY.NS (10%) - IT export play                      │
+│  • RELIANCE.NS (15%) - Diversified conglomerate        │
+│  • HINDUNILVR.NS (10%) - Stable FMCG                   │
+│  • ITC.NS (8%) - FMCG + hotels                         │
+│  • SUNPHARMA.NS (8%) - Pharma leader                   │
+│  • MARUTI.NS (7%) - Auto sector exposure               │
+└────────────────────────────────────────────────────────┘
+
+HIGH RISK PORTFOLIO:
+┌────────────────────────────────────────────────────────┐
+│  Target: Maximum growth, higher volatility OK          │
+│  Expected Return: 18-25%+ annually                     │
+│  Volatility: High                                      │
+├────────────────────────────────────────────────────────┤
+│  SECTOR ALLOCATION:                                    │
+│  • IT Services: 30%                                    │
+│  • Energy & Conglomerates: 25%                         │
+│  • Banking & NBFC: 20%                                 │
+│  • Pharma: 15%                                         │
+│  • Auto: 10%                                           │
+├────────────────────────────────────────────────────────┤
+│  EXAMPLE STOCKS (10-12 stocks):                        │
+│  • TCS.NS (12%) - IT services                          │
+│  • INFY.NS (10%) - IT services                         │
+│  • WIPRO.NS (8%) - IT services                         │
+│  • RELIANCE.NS (15%) - Diversified growth              │
+│  • ONGC.NS (10%) - Energy sector                       │
+│  • BAJFINANCE.NS (10%) - High-growth NBFC              │
+│  • ICICIBANK.NS (10%) - Banking                        │
+│  • SUNPHARMA.NS (8%) - Pharma exports                  │
+│  • DRREDDY.NS (7%) - Pharma R&D focus                  │
+│  • TATAMOTORS.NS (5%) - Auto growth story              │
+│  • MARUTI.NS (5%) - Auto leader                        │
+└────────────────────────────────────────────────────────┘
+
+
+4.4.5 PORTFOLIO GENERATION ALGORITHM
+--------------------------------------------------------------------------------
+
+STEP-BY-STEP PROCESS:
+
+┌──────────────────────────────────────────────────────────┐
+│  STEP 1: Determine Asset Allocation by Risk              │
+│  Based on risk tolerance, decide sector weights          │
+└──────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────┐
+│  STEP 2: Select Stocks from Each Sector                  │
+│  • Fetch top stocks from each sector                     │
+│  • Filter by market cap, liquidity                       │
+│  • Prefer fundamentally strong stocks                    │
+└──────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────┐
+│  STEP 3: Calculate Stock-Level Allocation                │
+│  • Equal weight within sector (MVP)                      │
+│  • E.g., Banking 30% → Split among 3 banks (10% each)    │
+└──────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────┐
+│  STEP 4: Calculate Expected Return & Risk                │
+│  • Expected return = weighted avg of historical returns  │
+│  • Risk score = function of sector concentration         │
+└──────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────┐
+│  STEP 5: Calculate Diversification Score                 │
+│  • Use Herfindahl-Hirschman Index (HHI)                  │
+│  • Score = 1 - HHI (higher = better diversified)         │
+└──────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────┐
+│  STEP 6: Generate Rationale for Each Stock               │
+│  • Why this stock? (fundamentals, sector leader, etc.)   │
+│  • How does it fit the portfolio?                        │
+└──────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────┐
+│  STEP 7: Store Portfolio in Database                     │
+│  • Save to portfolios table                              │
+│  • Link to user                                          │
+└──────────────────────────────────────────────────────────┘
+
+
+PSEUDOCODE:
+
+def generate_portfolio(risk_tolerance, investment_amount=100000, goal="wealth_creation"):
+    # Step 1: Get sector allocation template
+    if risk_tolerance == "low":
+        sector_allocation = {
+            "Banking": 0.40,
+            "FMCG": 0.30,
+            "IT": 0.20,
+            "Energy": 0.10
+        }
+        num_stocks = 7
+    elif risk_tolerance == "moderate":
+        sector_allocation = {
+            "Banking": 0.30,
+            "IT": 0.25,
+            "FMCG": 0.20,
+            "Energy": 0.15,
+            "Pharma": 0.10
+        }
+        num_stocks = 9
+    else:  # high
+        sector_allocation = {
+            "IT": 0.30,
+            "Energy": 0.25,
+            "Banking": 0.20,
+            "Pharma": 0.15,
+            "Auto": 0.10
+        }
+        num_stocks = 11
+    
+    # Step 2: Select stocks from stock universe
+    portfolio = []
+    for sector, weight in sector_allocation.items():
+        stocks_in_sector = STOCK_UNIVERSE[sector]
+        # Select top stocks from sector (e.g., 2-3 stocks per sector)
+        num_stocks_in_sector = max(2, int(num_stocks * weight))
+        selected_stocks = select_top_stocks(stocks_in_sector, num_stocks_in_sector)
+        
+        # Step 3: Allocate weight equally within sector
+        stock_weight = weight / len(selected_stocks)
+        for stock in selected_stocks:
+            portfolio.append({
+                "symbol": stock["symbol"],
+                "name": stock["name"],
+                "sector": sector,
+                "weight": stock_weight,
+                "amount": investment_amount * stock_weight,
+                "rationale": generate_rationale(stock, sector)
+            })
+    
+    # Step 4: Calculate metrics
+    expected_return = calculate_expected_return(portfolio)
+    risk_score = calculate_risk_score(portfolio, risk_tolerance)
+    
+    # Step 5: Diversification score
+    diversification = 1 - calculate_hhi(portfolio)
+    
+    return {
+        "stocks": portfolio,
+        "sector_distribution": sector_allocation,
+        "expected_return": expected_return,
+        "risk_score": risk_score,
+        "diversification_score": diversification,
+        "total_stocks": len(portfolio)
+    }
+
+
+4.4.6 PORTFOLIO METRICS CALCULATION
+--------------------------------------------------------------------------------
+
+1. EXPECTED RETURN:
+   Simple average of historical returns (past 1 year)
+   
+   Formula:
+   Expected Return = Σ (Stock_i Weight × Stock_i Historical Return)
+
+2. RISK SCORE (1-10):
+   Based on sector concentration and volatility
+   
+   Components:
+   • Sector concentration (HHI)
+   • Number of stocks (more = lower risk)
+   • Presence of volatile sectors (auto, pharma)
+   
+   Risk Score = (Concentration × 5) + (Volatility Factor × 3) + (Stock Count Factor × 2)
+
+3. DIVERSIFICATION SCORE (0-1):
+   Herfindahl-Hirschman Index (HHI)
+   
+   Formula:
+   HHI = Σ (Stock_i Weight)²
+   Diversification = 1 - HHI
+   
+   Interpretation:
+   • 1.0 = Perfect diversification (all stocks equal weight)
+   • 0.5 = Moderate diversification
+   • 0.0 = No diversification (single stock)
+   
+   Example:
+   Portfolio with 5 stocks at 20% each:
+   HHI = 0.20² + 0.20² + 0.20² + 0.20² + 0.20²
+       = 0.04 + 0.04 + 0.04 + 0.04 + 0.04
+       = 0.20
+   Diversification = 1 - 0.20 = 0.80 (well diversified!)
+
+4. SHARPE RATIO (Future Enhancement):
+   Risk-adjusted return
+   
+   Formula:
+   Sharpe = (Portfolio Return - Risk-Free Rate) / Portfolio Std Dev
+   
+   Higher is better (more return per unit of risk)
+
+
+--- DIAGRAM 4.4: PORTFOLIO BUILDER FLOW ---
+
+[MERMAID CODE - Copy this to Mermaid Live Editor]
+
+graph TD
+    START[User Requests Portfolio] --> RISK{Risk Tolerance?}
+    
+    RISK -->|Low| LOW_ALLOC[Banking 40%<br/>FMCG 30%<br/>IT 20%<br/>Energy 10%]
+    RISK -->|Moderate| MOD_ALLOC[Banking 30%<br/>IT 25%<br/>FMCG 20%<br/>Energy 15%<br/>Pharma 10%]
+    RISK -->|High| HIGH_ALLOC[IT 30%<br/>Energy 25%<br/>Banking 20%<br/>Pharma 15%<br/>Auto 10%]
+    
+    LOW_ALLOC --> SELECT[Select Stocks from Universe]
+    MOD_ALLOC --> SELECT
+    HIGH_ALLOC --> SELECT
+    
+    SELECT --> EQUAL[Equal Weight Within Sector]
+    EQUAL --> CALC[Calculate Metrics]
+    
+    CALC --> RETURN[Expected Return]
+    CALC --> RISK_SCORE[Risk Score 1-10]
+    CALC --> DIV[Diversification 0-1]
+    
+    RETURN --> STORE[Store in Database]
+    RISK_SCORE --> STORE
+    DIV --> STORE
+    
+    STORE --> EXPLAIN[Generate Explanation]
+    EXPLAIN --> RESPONSE[Return Portfolio to User]
+    
+    style RISK fill:#FF6B6B
+    style SELECT fill:#4ECDC4
+    style CALC fill:#F7DC6F
+    style RESPONSE fill:#4ECDC4
+
+[END MERMAID CODE]
+
+
+================================================================================
+
+CONTINUED IN NEXT SECTION...
+
+This completes Section 4.1-4.4. The next file will cover:
+- 4.5 Multi-Agent Orchestrator
+- 4.6 Agentic RAG System
+
+Let me know if you want me to create the next section!
