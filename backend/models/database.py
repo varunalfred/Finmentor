@@ -7,9 +7,16 @@ from sqlalchemy import Column, Integer, String, Text, DateTime, Float, Boolean, 
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-from pgvector.sqlalchemy import Vector
 from datetime import datetime
 import uuid
+
+# Optional PGVector support - will use JSON if not available
+try:
+    from pgvector.sqlalchemy import Vector
+    PGVECTOR_AVAILABLE = True
+except ImportError:
+    PGVECTOR_AVAILABLE = False
+    print("⚠️  PGVector not available - using JSON for embeddings (limited semantic search)")
 
 Base = declarative_base()
 
@@ -109,7 +116,8 @@ class Message(Base):
     input_type = Column(String(20), default="text")  # text, voice, image, document
 
     # Vector embedding for semantic search (1536 dims for OpenAI, 768 for Gemini)
-    embedding = Column(Vector(1536))
+    # Uses Vector if available, otherwise JSON array
+    embedding = Column(Vector(1536) if PGVECTOR_AVAILABLE else JSON)
 
     # Multimodal data
     voice_data = Column(Text)  # Base64 encoded audio
@@ -284,7 +292,8 @@ class EducationalContent(Base):
     key_points = Column(JSON)
 
     # Vector embedding for semantic search
-    embedding = Column(Vector(1536))
+    # Uses Vector if available, otherwise JSON array
+    embedding = Column(Vector(1536) if PGVECTOR_AVAILABLE else JSON)
 
     # Metadata
     duration_minutes = Column(Integer)

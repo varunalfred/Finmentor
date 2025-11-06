@@ -10,6 +10,10 @@ from sqlalchemy.pool import NullPool  # Connection pooling strategy
 import os  # For environment variables
 from typing import AsyncGenerator  # Type hint for async generators
 import logging  # For logging database events
+from dotenv import load_dotenv  # Load environment variables from .env file
+
+# Load environment variables
+load_dotenv()
 
 from models.database import Base  # Base class for all database models
 
@@ -35,10 +39,13 @@ class DatabaseService:
     def _initialize(self):
         """Initialize database connections"""
         # Database configuration
-        self.database_url = os.getenv(
-            "DATABASE_URL",  # Get from environment variable
-            "postgresql://postgres:password@localhost/finmentor"  # Default local database
-        )
+        self.database_url = os.getenv("DATABASE_URL")
+        if not self.database_url:
+            raise ValueError(
+                "DATABASE_URL environment variable is required.\n"
+                "Example: DATABASE_URL=postgresql://postgres:yourpassword@localhost:5432/finmentor\n"
+                "Add it to your .env file with your actual database credentials."
+            )
 
         # Convert to async URL if needed
         if self.database_url.startswith("postgresql://"):  # Standard PostgreSQL URL?
@@ -87,20 +94,12 @@ class DatabaseService:
 # Create singleton instance
 db_service = DatabaseService()  # This creates the one and only instance
 
-# Module-level references for backward compatibility
-DATABASE_URL = db_service.database_url  # Expose database URL
-ASYNC_DATABASE_URL = db_service.async_database_url  # Expose async URL
-engine = db_service.engine  # Expose async engine
-AsyncSessionLocal = db_service.AsyncSessionLocal  # Expose async session factory
-sync_engine = db_service.sync_engine  # Expose sync engine
-SessionLocal = db_service.SessionLocal  # Expose sync session factory
-
 # ============= Database Initialization =============
 
 async def init_db():
     """Initialize database tables"""
     try:
-        async with engine.begin() as conn:  # Start database transaction
+        async with db_service.engine.begin() as conn:  # Start database transaction
             # Create all tables defined in models
             await conn.run_sync(Base.metadata.create_all)  # Run synchronously in async context
             logger.info("Database tables created successfully")  # Log success
@@ -111,7 +110,7 @@ async def init_db():
 async def drop_db():
     """Drop all database tables (use with caution!)"""
     try:
-        async with engine.begin() as conn:  # Start transaction
+        async with db_service.engine.begin() as conn:  # Start transaction
             await conn.run_sync(Base.metadata.drop_all)  # Drop all tables
             logger.info("Database tables dropped")  # Log completion
     except Exception as e:
@@ -125,7 +124,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
     Dependency for getting database session
     Use in FastAPI endpoints with Depends()
     """
-    async with AsyncSessionLocal() as session:  # Create new session
+    async with db_service.AsyncSessionLocal() as session:  # Create new session
         try:
             yield session  # Provide session to endpoint
             await session.commit()  # Commit changes if successful
@@ -137,7 +136,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 def get_sync_db() -> Session:
     """Get synchronous database session for scripts"""
-    db = SessionLocal()  # Create sync session
+    db = db_service.SessionLocal()  # Create sync session
     try:
         return db  # Return for use
     finally:
@@ -148,7 +147,7 @@ def get_sync_db() -> Session:
 async def test_connection():
     """Test database connection"""
     try:
-        async with engine.connect() as conn:  # Try to connect
+        async with db_service.engine.connect() as conn:  # Try to connect
             result = await conn.execute("SELECT 1")  # Simple test query
             logger.info("Database connection successful")  # Log success
             return True  # Connection works

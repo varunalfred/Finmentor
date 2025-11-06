@@ -8,6 +8,7 @@ from typing import Dict, Any, List, Optional, Union
 from datetime import datetime
 import base64
 import io
+import os
 from PIL import Image
 import PyPDF2
 import logging
@@ -75,10 +76,10 @@ def get_hybrid_system(db: AsyncSession = None) -> HybridFinMentorSystem:
     global hybrid_system
     if hybrid_system is None:
         config = {
-            "model": "gemini-pro",  # Will auto-detect available API
-            "temperature": 0.7,
-            "max_tokens": 1000,
-            "verbose": True
+            "model": os.getenv("DEFAULT_MODEL", "gemini-pro"),  # Configurable via env
+            "temperature": float(os.getenv("DEFAULT_TEMPERATURE", "0.7")),
+            "max_tokens": int(os.getenv("DEFAULT_MAX_TOKENS", "1000")),
+            "verbose": os.getenv("VERBOSE_LOGGING", "false").lower() == "true"
         }
         hybrid_system = HybridFinMentorSystem(config, db_session=db)
     elif db:

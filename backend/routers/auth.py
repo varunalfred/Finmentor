@@ -18,8 +18,10 @@ router = APIRouter()  # Create router for auth endpoints
 # OAuth2 scheme for token authentication
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")  # Defines where to get tokens
 
-# Initialize auth service
-auth_service = AuthService()  # Singleton service for auth operations
+# Helper function to get auth service with database session
+def get_auth_service(db: AsyncSession = Depends(get_db)) -> AuthService:
+    """Get AuthService instance with database session"""
+    return AuthService(db)
 
 # ============= Request/Response Models =============
 
@@ -61,12 +63,12 @@ class UserResponse(BaseModel):
 @router.post("/register", response_model=UserResponse)  # POST to /api/auth/register
 async def register(
     user_data: UserRegister,  # Registration data from request body
-    db: AsyncSession = Depends(get_db)  # Inject database session
+    auth_service: AuthService = Depends(get_auth_service)  # Inject auth service with db
 ):
     """Register a new user"""
     try:
         # Check if user exists
-        existing = await auth_service.get_user_by_email(db, user_data.email)  # Query by email
+        existing = await auth_service.get_user_by_email(user_data.email)  # Query by email
         if existing:  # Email already taken?
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,  # 400 Bad Request
@@ -75,7 +77,6 @@ async def register(
 
         # Create new user
         user = await auth_service.create_user(
-            db=db,  # Database session
             email=user_data.email,  # User's email
             username=user_data.username,  # Chosen username
             password=user_data.password,  # Password (will be hashed in service)
@@ -108,13 +109,12 @@ async def register(
 @router.post("/login", response_model=Token)  # POST to /api/auth/login
 async def login(
     form_data: OAuth2PasswordRequestForm = Depends(),  # Standard OAuth2 form (username/password)
-    db: AsyncSession = Depends(get_db)  # Database session
+    auth_service: AuthService = Depends(get_auth_service)  # Inject auth service
 ):
     """Login and get access token"""
     try:
         # Authenticate user
         user = await auth_service.authenticate_user(
-            db=db,  # Database to check
             username=form_data.username,  # Provided username
             password=form_data.password  # Provided password (will be verified)
         )
@@ -134,7 +134,7 @@ async def login(
         return Token(
             access_token=token,  # The JWT token
             token_type="bearer",  # OAuth2 bearer token
-            expires_in=auth_service.access_token_expire_minutes * 60  # Expiry in seconds
+            expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60  # Expiry in seconds
         )
 
     except HTTPException:
@@ -148,15 +148,15 @@ async def login(
 @router.post("/token", response_model=Token)  # OAuth2 standard endpoint
 async def token(
     form_data: OAuth2PasswordRequestForm = Depends(),  # OAuth2 form data
-    db: AsyncSession = Depends(get_db)  # Database session
+    auth_service: AuthService = Depends(get_auth_service)  # Auth service
 ):
     """OAuth2 compatible token endpoint"""
-    return await login(form_data, db)  # Just calls login endpoint
+    return await login(form_data, auth_service)  # Just calls login endpoint
 
 @router.get("/me", response_model=UserResponse)  # GET /api/auth/me
 async def get_current_user(
     token: str = Depends(oauth2_scheme),  # Extract token from Authorization header
-    db: AsyncSession = Depends(get_db)  # Database session
+    auth_service: AuthService = Depends(get_auth_service)  # Auth service
 ):
     """Get current user information"""
     try:
@@ -171,7 +171,7 @@ async def get_current_user(
 
         # Get user
         username = payload.get("sub")  # Extract username from token payload
-        user = await auth_service.get_user_by_username(db, username)  # Fetch user from DB
+        user = await auth_service.get_user_by_username(username)  # Fetch user from DB
 
         if not user:  # User doesn't exist?
             raise HTTPException(
@@ -201,7 +201,8 @@ async def get_current_user(
 
 @router.post("/refresh", response_model=Token)
 async def refresh_token(
-    current_token: str = Depends(oauth2_scheme)
+    current_token: str = Depends(oauth2_scheme),
+    auth_service: AuthService = Depends(get_auth_service)
 ):
     """Refresh access token"""
     try:
@@ -222,7 +223,7 @@ async def refresh_token(
         return Token(
             access_token=new_token,
             token_type="bearer",
-            expires_in=auth_service.access_token_expire_minutes * 60
+            expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60
         )
 
     except HTTPException:
@@ -244,7 +245,7 @@ async def logout(token: str = Depends(oauth2_scheme)):  # Require valid token
 
 async def get_current_active_user(
     token: str = Depends(oauth2_scheme),  # Extract token from header
-    db: AsyncSession = Depends(get_db)  # Get database session
+    auth_service: AuthService = Depends(get_auth_service)  # Auth service
 ):
     """Dependency to get current active user for protected routes"""
     try:
@@ -257,7 +258,7 @@ async def get_current_active_user(
             )
 
         username = payload.get("sub")  # Get username from token
-        user = await auth_service.get_user_by_username(db, username)  # Fetch from DB
+        user = await auth_service.get_user_by_username(username)  # Fetch from DB
 
         if not user:  # User not found?
             raise HTTPException(
@@ -280,3 +281,6 @@ async def get_current_active_user(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Authentication failed: {str(e)}"
         )
+
+# Token expiry constant
+ACCESS_TOKEN_EXPIRE_MINUTES = 30

@@ -9,6 +9,10 @@ from contextlib import asynccontextmanager  # For managing app lifecycle
 import logging  # For logging events and errors
 from typing import Dict, Any  # Type hints for better code clarity
 import os  # For environment variables
+from dotenv import load_dotenv  # Load .env file
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Import what we actually have
 from routers import chat, auth  # API route handlers
@@ -63,10 +67,18 @@ app = FastAPI(
     lifespan=lifespan  # Attach lifecycle manager for startup/shutdown
 )
 
+# Get allowed CORS origins from environment
+# For development: http://localhost:3000,http://localhost:5173
+# For production: https://yourdomain.com,https://app.yourdomain.com
+ALLOWED_ORIGINS = os.getenv(
+    "ALLOWED_ORIGINS",
+    "http://localhost:3000,http://localhost:5173"  # Development defaults only
+).split(",")
+
 # Configure CORS (Cross-Origin Resource Sharing)
 app.add_middleware(
     CORSMiddleware,  # Middleware to handle browser security
-    allow_origins=["*"],  # Allow all origins (configure for production!)
+    allow_origins=ALLOWED_ORIGINS,  # Specific origins only (not wildcard!)
     allow_credentials=True,  # Allow cookies/auth headers
     allow_methods=["*"],  # Allow all HTTP methods (GET, POST, etc.)
     allow_headers=["*"],  # Allow all headers

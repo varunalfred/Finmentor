@@ -10,7 +10,7 @@ from typing import Dict, Any, List, Optional  # Type hints
 from datetime import datetime, timedelta  # Date/time operations
 import yfinance as yf  # Yahoo Finance API
 import json  # JSON parsing
-from duckduckgo_search import DDGS, AsyncDDGS  # DuckDuckGo search (no API key needed)
+from ddgs import DDGS  # DuckDuckGo search (renamed package, no API key needed)
 import pandas as pd  # Data manipulation
 import logging  # For logging events
 from functools import lru_cache  # For caching function results
@@ -37,8 +37,7 @@ class DataSourcesManager:
         """Initialize search APIs"""
 
         # DuckDuckGo Search - no API key needed (always available)
-        self.ddg_search = AsyncDDGS()  # Async version for performance
-        self.ddg_sync = DDGS()  # Sync version as fallback
+        self.ddg_sync = DDGS()  # Sync version
         logger.info("DuckDuckGo Search initialized")  # Log success
 
         # Google Search (optional - needs API keys)
@@ -114,7 +113,8 @@ class DataSourcesManager:
         # Always try DuckDuckGo first (no API key needed)
         try:
             ddg_results = []  # Collect results
-            async for r in self.ddg_search.text(query, max_results=5):  # Search asynchronously
+            # Use sync version (async version removed in newer duckduckgo-search)
+            for r in self.ddg_sync.text(query, max_results=5):  # Search synchronously
                 ddg_results.append({
                     "title": r.get("title", ""),  # Result title
                     "snippet": r.get("body", ""),  # Result description
@@ -126,21 +126,7 @@ class DataSourcesManager:
                 results["sources"].append("duckduckgo")  # Add source
                 results["results"].extend(ddg_results)  # Add results
         except Exception as e:
-            logger.error(f"DuckDuckGo async search error: {e}")  # Log error
-            # Try sync version as fallback
-            try:
-                ddg_results = list(self.ddg_sync.text(query, max_results=5))  # Sync search
-                for r in ddg_results:  # Process each result
-                    results["results"].append({
-                        "title": r.get("title", ""),  # Title
-                        "snippet": r.get("body", ""),  # Description
-                        "link": r.get("href", ""),  # URL
-                        "source": "duckduckgo"  # Source
-                    })
-                if results["results"]:  # If we got results
-                    results["sources"].append("duckduckgo")  # Add source
-            except Exception as e2:
-                logger.error(f"DuckDuckGo sync search error: {e2}")  # Log fallback error
+            logger.error(f"DuckDuckGo search error: {e}")  # Log error
 
         # Optionally enhance with Google if available and needed
         if len(results["results"]) < 3 and self.google_search:  # Need more results and have Google?

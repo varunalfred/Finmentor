@@ -5,11 +5,13 @@ DSPy for intelligent reasoning, LangChain for orchestration
 
 import dspy
 from typing import Dict, Any, List, Optional
-from langchain.agents import AgentExecutor, create_openai_tools_agent
+
+# LangChain imports - using latest versions only
+from langchain.agents import create_react_agent, create_openai_tools_agent, AgentExecutor
 from langchain.memory import ConversationBufferWindowMemory
-from langchain.tools import Tool, StructuredTool
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.tools import Tool, StructuredTool
 from langchain_openai import ChatOpenAI
-from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 import logging
 from datetime import datetime
 import json
@@ -195,35 +197,38 @@ class HybridFinMentorSystem:
         """Initialize DSPy configuration - supports multiple LLM providers"""
         import os
 
+        # DSPy uses LiteLLM under the hood, so we use "provider/model" format
         # Check environment variables to determine which LLM to use
         # Priority order: Gemini > OpenAI > Claude
         if os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"):
             # Preferred: Use Google's Gemini for best performance/cost ratio
-            lm = dspy.Google(
-                api_key=os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"),
-                model=self.config.get("model", "gemini-pro"),  # Default to gemini-pro
+            # Set the API key as environment variable for LiteLLM
+            os.environ["GEMINI_API_KEY"] = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+            
+            lm = dspy.LM(
+                model="gemini/" + self.config.get("model", "gemini-1.5-flash"),  # LiteLLM format
                 temperature=self.config.get("temperature", 0.7),  # 0.7 = balanced creativity
                 max_tokens=self.config.get("max_tokens", 1000)   # Response length limit
             )
-            logger.info("DSPy initialized with Gemini")
+            logger.info(f"DSPy initialized with Gemini: {self.config.get('model', 'gemini-1.5-flash')}")
 
         elif os.getenv("OPENAI_API_KEY"):
             # Alternative: OpenAI GPT models
-            lm = dspy.OpenAI(
-                model=self.config.get("model", "gpt-3.5-turbo"),  # Cheaper than GPT-4
+            lm = dspy.LM(
+                model="openai/" + self.config.get("model", "gpt-3.5-turbo"),  # LiteLLM format
                 temperature=self.config.get("temperature", 0.7),
                 max_tokens=self.config.get("max_tokens", 1000)
             )
-            logger.info("DSPy initialized with OpenAI")
+            logger.info(f"DSPy initialized with OpenAI: {self.config.get('model', 'gpt-3.5-turbo')}")
 
         elif os.getenv("ANTHROPIC_API_KEY"):
             # Alternative: Anthropic's Claude
-            lm = dspy.Claude(
-                model=self.config.get("model", "claude-3-haiku"),  # Fast and cheap
+            lm = dspy.LM(
+                model="anthropic/" + self.config.get("model", "claude-3-haiku-20240307"),  # LiteLLM format
                 temperature=self.config.get("temperature", 0.7),
                 max_tokens=self.config.get("max_tokens", 1000)
             )
-            logger.info("DSPy initialized with Claude")
+            logger.info(f"DSPy initialized with Claude: {self.config.get('model', 'claude-3-haiku-20240307')}")
 
         else:
             # No API key found - cannot proceed
@@ -301,94 +306,83 @@ class HybridFinMentorSystem:
         self.financial_tools = FinancialTools()
 
         tools = [
-            # DSPy-based reasoning tools
-            StructuredTool(
+            # DSPy-based reasoning tools - using Tool instead of StructuredTool
+            Tool(
                 name="analyze_financial_query",
-                description="Analyze complex financial questions with market context",
-                func=self._tool_analyze_query,
-                args_schema=None
+                description="Analyze complex financial questions with market context. Input should be a query string.",
+                func=self._tool_analyze_query
             ),
-            StructuredTool(
+            Tool(
                 name="explain_concept",
-                description="Explain financial concepts adapted to user level",
-                func=self._tool_explain_concept,
-                args_schema=None
+                description="Explain financial concepts adapted to user level. Input should be a concept name.",
+                func=self._tool_explain_concept
             ),
-            StructuredTool(
+            Tool(
                 name="assess_risk",
-                description="Assess investment risk and psychological factors",
-                func=self._tool_assess_risk,
-                args_schema=None
+                description="Assess investment risk and psychological factors. Input should be an investment description.",
+                func=self._tool_assess_risk
             ),
 
             # Real market data tools
-            StructuredTool(
+            Tool(
                 name="get_stock_data",
-                description="Get real-time stock data including price, volume, PE ratio, etc.",
-                func=lambda symbol: asyncio.run(self.financial_tools.get_real_stock_data(symbol)),
-                args_schema=None
+                description="Get real-time stock data including price, volume, PE ratio, etc. Input should be a stock symbol like AAPL or GOOGL.",
+                func=lambda symbol: asyncio.run(self.financial_tools.get_real_stock_data(symbol))
             ),
-            StructuredTool(
+            Tool(
                 name="get_historical_prices",
-                description="Get historical price data for a stock",
-                func=lambda symbol, period="1mo": asyncio.run(
-                    self.financial_tools.get_historical_prices(symbol, period)
-                ),
-                args_schema=None
+                description="Get historical price data for a stock. Input should be a stock symbol.",
+                func=lambda symbol: asyncio.run(
+                    self.financial_tools.get_historical_prices(symbol, "1mo")
+                )
             ),
-            StructuredTool(
+            Tool(
                 name="calculate_technical_indicators",
-                description="Calculate RSI, moving averages, and other technical indicators",
+                description="Calculate RSI, moving averages, and other technical indicators. Input should be a stock symbol.",
                 func=lambda symbol: asyncio.run(
                     self.financial_tools.calculate_technical_indicators(symbol)
-                ),
-                args_schema=None
+                )
             ),
 
             # Financial calculation tools
-            StructuredTool(
+            Tool(
                 name="calculate_portfolio_metrics",
-                description="Calculate portfolio Sharpe ratio, volatility, and other metrics",
-                func=lambda holdings, prices: asyncio.run(
-                    self.financial_tools.calculate_portfolio_metrics(holdings, prices)
-                ),
-                args_schema=None
+                description="Calculate portfolio Sharpe ratio, volatility, and other metrics. Input should be JSON with holdings and prices.",
+                func=lambda data: asyncio.run(
+                    self.financial_tools.calculate_portfolio_metrics(data.get('holdings', []), data.get('prices', {}))
+                )
             ),
-            StructuredTool(
+            Tool(
                 name="calculate_position_size",
-                description="Calculate optimal position size based on risk management",
-                func=lambda account_size, risk_percent, entry, stop_loss: asyncio.run(
+                description="Calculate optimal position size based on risk management. Input should be account_size.",
+                func=lambda account_size: asyncio.run(
                     self.financial_tools.calculate_position_size(
-                        account_size, risk_percent, entry, stop_loss
+                        account_size, 2, 100, 95  # defaults
                     )
-                ),
-                args_schema=None
+                )
             ),
-            StructuredTool(
+            Tool(
                 name="calculate_compound_interest",
-                description="Calculate compound interest and future value",
-                func=lambda principal, rate, years, monthly=0: asyncio.run(
+                description="Calculate compound interest and future value. Input should be principal amount.",
+                func=lambda principal: asyncio.run(
                     self.financial_tools.calculate_compound_interest(
-                        principal, rate, years, additional_monthly=monthly
+                        principal, 7, 10  # 7% for 10 years as default
                     )
-                ),
-                args_schema=None
+                )
             ),
-            StructuredTool(
+            Tool(
                 name="calculate_loan_payment",
-                description="Calculate loan/mortgage payments",
-                func=lambda principal, rate, years: asyncio.run(
-                    self.financial_tools.calculate_loan_payment(principal, rate, years)
-                ),
-                args_schema=None
+                description="Calculate loan/mortgage payments. Input should be principal amount.",
+                func=lambda principal: asyncio.run(
+                    self.financial_tools.calculate_loan_payment(principal, 5, 30)  # 5% for 30 years default
+                )
             ),
-            StructuredTool(
+            Tool(
                 name="compare_stocks",
-                description="Compare multiple stocks on various metrics",
+                description="Compare multiple stocks on various metrics. Input should be comma-separated stock symbols like 'AAPL,GOOGL,MSFT'.",
                 func=lambda symbols: asyncio.run(
-                    self.financial_tools.compare_stocks(symbols)
-                ),
-                args_schema=None
+                    self.financial_tools.compare_stocks(symbols.split(',') if isinstance(symbols, str) else symbols)
+                )
             )
         ]
         return tools

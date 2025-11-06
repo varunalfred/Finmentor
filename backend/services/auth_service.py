@@ -18,10 +18,17 @@ from services.conversation_service import ConversationService
 logger = logging.getLogger(__name__)
 
 # Security configuration
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-secret-key-change-in-production")
+SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+if not SECRET_KEY:
+    raise ValueError(
+        "JWT_SECRET_KEY environment variable is required for security.\n"
+        "Generate a strong secret key using: python -c 'import secrets; print(secrets.token_urlsafe(32))'\n"
+        "Add it to your .env file: JWT_SECRET_KEY=your-generated-key"
+    )
+
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-REFRESH_TOKEN_EXPIRE_DAYS = 7
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
+REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
 
 # Password hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -30,6 +37,7 @@ class AuthService:
     """Service for user authentication and management"""
 
     def __init__(self, db: AsyncSession):
+        """Initialize auth service with database session"""
         self.db = db
         self.conversation_service = ConversationService(db)
 
@@ -80,15 +88,18 @@ class AuthService:
 
     # ============= User Management =============
 
-    async def register_user(
+    async def create_user(
         self,
         email: str,
         username: str,
         password: str,
         full_name: Optional[str] = None,
+        user_type: str = "beginner",
+        education_level: str = "basic",
+        risk_tolerance: str = "moderate",
         **profile_data
     ) -> Optional[User]:
-        """Register a new user"""
+        """Create/register a new user"""
         try:
             # Check if user already exists
             result = await self.db.execute(
@@ -106,10 +117,9 @@ class AuthService:
                 username=username,
                 full_name=full_name,
                 hashed_password=self.get_password_hash(password),
-                age=profile_data.get("age"),
-                user_type=profile_data.get("user_type", "beginner"),
-                education_level=profile_data.get("education_level", "basic"),
-                risk_tolerance=profile_data.get("risk_tolerance", "moderate"),
+                user_type=user_type,
+                education_level=education_level,
+                risk_tolerance=risk_tolerance,
                 financial_goals=profile_data.get("financial_goals", []),
                 preferred_language=profile_data.get("preferred_language", "en"),
                 preferred_output=profile_data.get("preferred_output", "text"),
@@ -120,11 +130,11 @@ class AuthService:
             await self.db.commit()
             await self.db.refresh(user)
 
-            # Log registration activity
+            # Log user registration
             await self.conversation_service.log_user_activity(
                 user_id=user.id,
                 activity_type="registration",
-                activity_data={"username": username, "email": email}
+                details={"email": email, "username": username}
             )
 
             logger.info(f"User registered: {username} ({email})")
@@ -134,6 +144,11 @@ class AuthService:
             await self.db.rollback()
             logger.error(f"Failed to register user: {e}")
             return None
+
+    # Alias for backward compatibility
+    async def register_user(self, *args, **kwargs):
+        """Alias for create_user"""
+        return await self.create_user(*args, **kwargs)
 
     async def authenticate_user(self, username_or_email: str, password: str) -> Optional[User]:
         """Authenticate a user with username/email and password"""
@@ -153,15 +168,15 @@ class AuthService:
             if not self.verify_password(password, user.hashed_password):
                 return None
 
-            # Update last login
+            # Update last login and log activity
             user.last_login = datetime.utcnow()
             await self.db.commit()
-
+            
             # Log login activity
             await self.conversation_service.log_user_activity(
                 user_id=user.id,
                 activity_type="login",
-                activity_data={"method": "password"}
+                details={"username": username_or_email}
             )
 
             return user
@@ -194,14 +209,27 @@ class AuthService:
             logger.error(f"Failed to get user by email: {e}")
             return None
 
+    async def get_user_by_username(self, username: str) -> Optional[User]:
+        """Get a user by username"""
+        try:
+            result = await self.db.execute(
+                select(User).where(User.username == username)
+            )
+            return result.scalar_one_or_none()
+
+        except Exception as e:
+            logger.error(f"Failed to get user by username: {e}")
+            return None
+
     async def update_user_profile(
         self,
+        db: AsyncSession,
         user_id: str,
         **profile_data
     ) -> Optional[User]:
         """Update user profile"""
         try:
-            user = await self.get_user_by_id(user_id)
+            user = await self.get_user_by_id(db, user_id)
             if not user:
                 return None
 
@@ -218,26 +246,27 @@ class AuthService:
 
             user.updated_at = datetime.utcnow()
 
-            await self.db.commit()
-            await self.db.refresh(user)
+            await db.commit()
+            await db.refresh(user)
 
             logger.info(f"Updated profile for user {user_id}")
             return user
 
         except Exception as e:
-            await self.db.rollback()
+            await db.rollback()
             logger.error(f"Failed to update user profile: {e}")
             return None
 
     async def change_password(
         self,
+        db: AsyncSession,
         user_id: str,
         old_password: str,
         new_password: str
     ) -> bool:
         """Change user password"""
         try:
-            user = await self.get_user_by_id(user_id)
+            user = await self.get_user_by_id(db, user_id)
             if not user:
                 return False
 
@@ -247,20 +276,20 @@ class AuthService:
             user.hashed_password = self.get_password_hash(new_password)
             user.updated_at = datetime.utcnow()
 
-            await self.db.commit()
+            await db.commit()
 
             logger.info(f"Password changed for user {user_id}")
             return True
 
         except Exception as e:
-            await self.db.rollback()
+            await db.rollback()
             logger.error(f"Failed to change password: {e}")
             return False
 
-    async def delete_user(self, user_id: str) -> bool:
+    async def delete_user(self, db: AsyncSession, user_id: str) -> bool:
         """Delete a user account (soft delete by marking inactive)"""
         try:
-            user = await self.get_user_by_id(user_id)
+            user = await self.get_user_by_id(db, user_id)
             if not user:
                 return False
 
@@ -268,19 +297,19 @@ class AuthService:
             user.is_active = False
             user.updated_at = datetime.utcnow()
 
-            await self.db.commit()
+            await db.commit()
 
             logger.info(f"User {user_id} marked as inactive")
             return True
 
         except Exception as e:
-            await self.db.rollback()
+            await db.rollback()
             logger.error(f"Failed to delete user: {e}")
             return False
 
     # ============= Token Validation =============
 
-    async def get_current_user(self, token: str) -> Optional[User]:
+    async def get_current_user(self, db: AsyncSession, token: str) -> Optional[User]:
         """Get current user from JWT token"""
         payload = self.verify_token(token)
         if not payload:
@@ -290,9 +319,9 @@ class AuthService:
         if not user_id:
             return None
 
-        return await self.get_user_by_id(user_id)
+        return await self.get_user_by_id(db, user_id)
 
-    async def refresh_access_token(self, refresh_token: str) -> Optional[str]:
+    async def refresh_access_token(self, db: AsyncSession, refresh_token: str) -> Optional[str]:
         """Generate new access token from refresh token"""
         payload = self.verify_token(refresh_token, token_type="refresh")
         if not payload:
@@ -303,36 +332,9 @@ class AuthService:
             return None
 
         # Verify user still exists and is active
-        user = await self.get_user_by_id(user_id)
+        user = await self.get_user_by_id(db, user_id)
         if not user or not user.is_active:
             return None
 
         # Create new access token
         return self.create_access_token({"sub": user_id})
-
-    # ============= User Statistics =============
-
-    async def get_user_stats(self, user_id: str) -> Dict[str, Any]:
-        """Get user statistics and activity summary"""
-        try:
-            user = await self.get_user_by_id(user_id)
-            if not user:
-                return {}
-
-            # Get conversation stats from conversation service
-            stats = await self.conversation_service.get_user_statistics(user_id)
-
-            # Add user profile info
-            stats.update({
-                "username": user.username,
-                "member_since": user.created_at.isoformat() if user.created_at else None,
-                "user_type": user.user_type,
-                "education_level": user.education_level,
-                "is_premium": user.is_premium
-            })
-
-            return stats
-
-        except Exception as e:
-            logger.error(f"Failed to get user stats: {e}")
-            return {}

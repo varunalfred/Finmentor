@@ -6,22 +6,26 @@ Verify that the DSPy + LangChain multi-agent architecture works correctly
 import asyncio
 import sys
 import os
+from pathlib import Path
 from datetime import datetime
+from dotenv import load_dotenv
 
-# Add backend to path
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# Load environment variables
+load_dotenv()
 
-# Set environment variables for testing
-os.environ["GEMINI_API_KEY"] = "test-key"  # Replace with actual key for real testing
+# Add backend directory to path (parent of tests directory)
+backend_path = Path(__file__).parent.parent
+sys.path.insert(0, str(backend_path))
 
 async def test_simple_query():
     """Test simple query with single agent"""
     from agents.hybrid_core import HybridFinMentorSystem
 
+    # Use environment variables for configuration
     config = {
-        "model": "gemini-pro",
-        "temperature": 0.7,
-        "max_tokens": 1000
+        "model": os.getenv("DEFAULT_MODEL", "gemini-pro"),
+        "temperature": float(os.getenv("DEFAULT_TEMPERATURE", "0.7")),
+        "max_tokens": int(os.getenv("DEFAULT_MAX_TOKENS", "1000"))
     }
 
     system = HybridFinMentorSystem(config)
@@ -48,10 +52,11 @@ async def test_complex_query():
     """Test complex query requiring multiple agents"""
     from agents.hybrid_core import HybridFinMentorSystem
 
+    # Use environment variables for configuration
     config = {
-        "model": "gemini-pro",
-        "temperature": 0.7,
-        "max_tokens": 1000
+        "model": os.getenv("DEFAULT_MODEL", "gemini-pro"),
+        "temperature": float(os.getenv("DEFAULT_TEMPERATURE", "0.7")),
+        "max_tokens": int(os.getenv("DEFAULT_MAX_TOKENS", "1000"))
     }
 
     system = HybridFinMentorSystem(config)
@@ -133,10 +138,11 @@ async def test_agent_collaboration():
     from agents.hybrid_core import HybridFinMentorSystem
     from services.agentic_rag import QueryIntent
 
+    # Use environment variables for configuration
     config = {
-        "model": "gemini-pro",
-        "temperature": 0.7,
-        "max_tokens": 1000
+        "model": os.getenv("DEFAULT_MODEL", "gemini-pro"),
+        "temperature": float(os.getenv("DEFAULT_TEMPERATURE", "0.7")),
+        "max_tokens": int(os.getenv("DEFAULT_MAX_TOKENS", "1000"))
     }
 
     system = HybridFinMentorSystem(config)

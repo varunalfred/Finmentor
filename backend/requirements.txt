@@ -1,54 +1,94 @@
 # Core Framework
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-python-multipart==0.0.6
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
 
 # Database
-sqlalchemy==2.0.23
-alembic==1.13.0
-asyncpg==0.29.0
-redis==5.0.1
-pgvector==0.2.4
+sqlalchemy>=2.0.0
+alembic>=1.13.0
+asyncpg>=0.29.0
+redis>=5.0.0
+pgvector>=0.2.0
 
-# AI/ML - Hybrid DSPy + LangChain
-dspy-ai==2.4.0
-langchain==0.1.0
-langchain-openai==0.0.5
-langchain-google-genai==0.0.5
-langchain-anthropic==0.0.5
-langchain-community==0.0.10
-google-generativeai==0.3.2
-openai==1.6.0
-anthropic==0.8.0
-tiktoken==0.5.2
-faiss-cpu==1.7.4
+# Core Framework
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+python-multipart==0.0.17
 
-# Data Processing
-pandas==2.1.4
-numpy==1.26.2
-yfinance==0.2.33
+# Database
+sqlalchemy==2.0.36
+alembic==1.14.0
+asyncpg==0.30.0
+redis==5.2.0
+pgvector==0.3.6
+
+# AI/LLM - DSPy Framework (flexible versioning for compatibility)
+dspy-ai>=2.4.0
+langchain~=0.3.0
+langchain-openai~=0.2.0
+langchain-google-genai~=2.0.0
+langchain-anthropic~=0.3.0
+langchain-community~=0.3.0
+google-generativeai~=0.8.0
+openai~=1.54.0
+anthropic~=0.39.0
+tiktoken~=0.8.0
+faiss-cpu==1.9.0.post1
+
+# Data & Analysis
+pandas==2.2.3
+numpy==1.26.4
+yfinance==0.2.50
 alpha-vantage==2.3.1
-duckduckgo-search==4.1.0
+ddgs==9.7.1
 newsapi-python==0.2.7
-fredapi==0.5.1
+fredapi==0.5.2
 
-# Authentication
+# Auth & Security
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
-python-multipart==0.0.6
 
-# Utilities
-python-dotenv==1.0.0
-httpx==0.25.2
-pydantic==2.5.2
-pydantic-settings==2.1.0
+# Utils
+python-dotenv==1.0.1
+httpx==0.27.2
+pydantic==2.9.2
+pydantic-settings==2.6.1
 
 # Testing
-pytest==7.4.3
-pytest-asyncio==0.21.1
-pytest-cov==4.1.0
+pytest==8.3.4
+pytest-asyncio==0.24.0
+pytest-cov==6.0.0
 
 # Development
-black==23.12.0
-flake8==6.1.0
-mypy==1.7.1
+black==24.10.0
+flake8==7.1.1
+mypy==1.13.0
+
+# Data Processing
+pandas>=2.1.0
+numpy>=1.26.0
+yfinance>=0.2.0
+alpha-vantage>=2.3.0
+duckduckgo-search>=4.1.0
+newsapi-python>=0.2.0
+fredapi>=0.5.0
+
+# Authentication
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.0
+
+# Utilities
+python-dotenv>=1.0.0
+httpx>=0.25.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+
+# Development
+black>=23.12.0
+flake8>=6.1.0
+mypy>=1.7.0

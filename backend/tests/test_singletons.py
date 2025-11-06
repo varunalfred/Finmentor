@@ -6,9 +6,11 @@ Verify that services are properly implemented as singletons
 import asyncio
 import sys
 import os
+from pathlib import Path
 
 # Add backend to path
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+backend_path = Path(__file__).parent.parent
+sys.path.insert(0, str(backend_path))
 
 async def test_database_singleton():
     """Test database service singleton"""

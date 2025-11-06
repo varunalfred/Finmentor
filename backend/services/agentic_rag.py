@@ -95,23 +95,28 @@ class AgenticRAG:
         }
 
     def _init_embedding_service(self):
-        """Initialize embedding service - prioritize Gemini"""
-        # Prioritize Gemini embeddings as requested
-        if os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"):
+        """Initialize embedding service - use EMBEDDING_API_KEY or fall back to local"""
+        # Check for dedicated embedding API key (allows choosing embedding provider)
+        embedding_key = os.getenv("EMBEDDING_API_KEY")
+        
+        if embedding_key and embedding_key.startswith("sk-"):
+            # OpenAI key format
+            from langchain_openai import OpenAIEmbeddings
+            logger.info("Using OpenAI embeddings (via EMBEDDING_API_KEY)")
+            return OpenAIEmbeddings(model="text-embedding-3-small", openai_api_key=embedding_key)
+        elif embedding_key and embedding_key.startswith("AIza"):
+            # Gemini key format
             from langchain_google_genai import GoogleGenerativeAIEmbeddings
-            logger.info("Using Gemini embeddings")
+            logger.info("Using Gemini embeddings (via EMBEDDING_API_KEY)")
             return GoogleGenerativeAIEmbeddings(
                 model="models/embedding-001",
-                google_api_key=os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+                google_api_key=embedding_key
             )
-        elif os.getenv("OPENAI_API_KEY"):
-            from langchain_openai import OpenAIEmbeddings
-            logger.info("Using OpenAI embeddings")
-            return OpenAIEmbeddings(model="text-embedding-3-small")
         else:
-            # Fallback to open-source alternative
+            # Use FREE local embeddings by default - unlimited queries!
+            # This separates embeddings from LLM API keys
             from sentence_transformers import SentenceTransformer
-            logger.info("Using SentenceTransformer embeddings")
+            logger.info("Using LOCAL SentenceTransformer embeddings (unlimited, no API key needed)")
             return SentenceTransformer('all-MiniLM-L6-v2')
 
     # ============= Intent Classification =============
