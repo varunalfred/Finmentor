@@ -7,14 +7,12 @@ PGVector enables efficient vector similarity search in PostgreSQL, essential for
 ## Installation Methods
 
 ### Method 1: Docker (Recommended) ⭐
-**Pros:** Quick, pre-configured, isolated environment  
-**Cons:** Requires Docker Desktop  
+**Pros:** Quick, pre-configured, isolated environment
+**Cons:** Requires Docker Desktop
 **Time:** ~5-10 minutes
-
 ```powershell
 # Pull PGVector-enabled PostgreSQL image
 docker pull pgvector/pgvector:0.8.0-pg17
-
 # Run container
 docker run -d \
   --name postgres-pgvector \

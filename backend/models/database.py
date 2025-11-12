@@ -115,9 +115,9 @@ class Message(Base):
     content = Column(Text, nullable=False)
     input_type = Column(String(20), default="text")  # text, voice, image, document
 
-    # Vector embedding for semantic search (1536 dims for OpenAI, 768 for Gemini)
+    # Vector embedding for semantic search (384 dims for local, 768 for Gemini, 1536 for OpenAI)
     # Uses Vector if available, otherwise JSON array
-    embedding = Column(Vector(1536) if PGVECTOR_AVAILABLE else JSON)
+    embedding = Column(Vector(384) if PGVECTOR_AVAILABLE else JSON)
 
     # Multimodal data
     voice_data = Column(Text)  # Base64 encoded audio
@@ -291,9 +291,9 @@ class EducationalContent(Base):
     summary = Column(Text)
     key_points = Column(JSON)
 
-    # Vector embedding for semantic search
+    # Vector embedding for semantic search (384 dims for local, 768 for Gemini, 1536 for OpenAI)
     # Uses Vector if available, otherwise JSON array
-    embedding = Column(Vector(1536) if PGVECTOR_AVAILABLE else JSON)
+    embedding = Column(Vector(384) if PGVECTOR_AVAILABLE else JSON)
 
     # Metadata
     duration_minutes = Column(Integer)

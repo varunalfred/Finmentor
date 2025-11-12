@@ -16,7 +16,7 @@ from dotenv import load_dotenv  # Load .env file
 load_dotenv()
 
 # Import what we actually have
-from routers import chat, auth  # API route handlers
+from routers import chat, auth, rag  # API route handlers
 from services.database import init_db, db_service  # Database initialization and service
 from agents.hybrid_core import HybridFinMentorSystem  # Main AI system (DSPy + LangChain)
 from agents.orchestrator import MultiAgentOrchestrator  # Manages multiple agents
@@ -88,6 +88,7 @@ app.add_middleware(
 # Include routers (attach API endpoints)
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])  # Auth endpoints at /api/auth/*
 app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])  # Chat endpoints at /api/chat/*
+app.include_router(rag.router, prefix="/api/rag", tags=["RAG"])  # RAG endpoints at /api/rag/*
 
 # Note: All financial queries (market, education, portfolio) go through
 # the chat endpoint which uses multi-agent processing to handle them
@@ -130,6 +131,7 @@ async def health_check():
         "services": {  # Status of supporting services
             "database": "connected" if db_service else "disconnected",  # DB connection status
             "rag": "active",  # RAG system status (always active)
+            "rag_kb_loaded": "check /api/rag/check",  # Link to check if KB is loaded
             "data_sources": "available"  # Data sources status
         }
     }
