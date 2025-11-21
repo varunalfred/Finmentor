@@ -1,0 +1,151 @@
+/* Stock Marquee Container */
+.stock-marquee-container {
+  background-color: var(--light-card-bg);
+  border-bottom: 2px solid var(--light-border);
+  padding: 12px 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+body.dark .stock-marquee-container {
+  background-color: var(--dark-card-bg);
+  border-bottom-color: var(--dark-border);
+}
+
+.marquee-label {
+  padding-left: 20px;
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--light-primary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+body.dark .marquee-label {
+  color: #8FABD4;
+}
+
+.marquee-wrapper {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+.marquee-content {
+  display: flex;
+  gap: 30px;
+  animation: marqueeScroll 10s linear infinite;
+  white-space: nowrap;
+}
+
+.marquee-content:hover {
+  animation-play-state: paused;
+}
+
+@keyframes marqueeScroll {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.marquee-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background-color: var(--light-bg);
+  border-radius: 6px;
+  border: 1px solid var(--light-border);
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+body.dark .marquee-item {
+  background-color: var(--dark-bg);
+  border-color: var(--dark-border);
+}
+
+.stock-name {
+  font-weight: 600;
+  color: var(--light-text);
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+body.dark .stock-name {
+  color: var(--dark-text);
+}
+
+.stock-price {
+  font-weight: 600;
+  color: #7f8c8d;
+}
+
+.stock-change {
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.stock-change.positive {
+  color: #27ae60;
+}
+
+.stock-change.negative {
+  color: #e74c3c;
+}
+
+.stock-change.neutral {
+  color: #95a5a6;
+}
+
+.marquee-loading {
+  padding: 12px 20px;
+  text-align: center;
+  color: #7f8c8d;
+  font-size: 14px;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .marquee-label {
+    padding-left: 15px;
+    font-size: 12px;
+  }
+
+  .marquee-item {
+    font-size: 12px;
+    padding: 5px 10px;
+    gap: 6px;
+  }
+
+  .stock-name {
+    max-width: 100px;
+  }
+}
+
+@media (max-width: 480px) {
+  .stock-marquee-container {
+    padding: 10px 0;
+    gap: 10px;
+  }
+
+  .marquee-label {
+    padding-left: 10px;
+    font-size: 11px;
+  }
+
+  .marquee-item {
+    font-size: 11px;
+    padding: 4px 8px;
+  }
+
+  .stock-name {
+    max-width: 80px;
+  }
+}

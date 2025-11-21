@@ -31,7 +31,12 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30")
 REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
 
 # Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Configure bcrypt to automatically handle 72-byte truncation
+pwd_context = CryptContext(
+    schemes=["bcrypt"], 
+    deprecated="auto",
+    bcrypt__truncate_error=False  # Automatically truncate passwords > 72 bytes
+)
 
 class AuthService:
     """Service for user authentication and management"""
@@ -45,10 +50,12 @@ class AuthService:
 
     def verify_password(self, plain_password: str, hashed_password: str) -> bool:
         """Verify a password against its hash"""
+        # Passlib automatically handles bcrypt 72-byte limit with truncate_error=False
         return pwd_context.verify(plain_password, hashed_password)
 
     def get_password_hash(self, password: str) -> str:
-        """Hash a password"""
+        """Hash a password for storage"""
+        # Passlib automatically handles bcrypt 72-byte limit with truncate_error=False
         return pwd_context.hash(password)
 
     # ============= Token Management =============
@@ -151,7 +158,7 @@ class AuthService:
         return await self.create_user(*args, **kwargs)
 
     async def authenticate_user(self, username_or_email: str, password: str) -> Optional[User]:
-        """Authenticate a user with username/email and password"""
+        """Authenticate a user with username or email and password"""
         try:
             # Find user by username or email
             result = await self.db.execute(
@@ -163,12 +170,15 @@ class AuthService:
             user = result.scalar_one_or_none()
 
             if not user:
+                logger.warning(f"Authentication failed: User not found - {username_or_email}")
                 return None
 
+            # Verify password
             if not self.verify_password(password, user.hashed_password):
+                logger.warning(f"Authentication failed: Invalid password for user - {username_or_email}")
                 return None
 
-            # Update last login and log activity
+            # Update last_login timestamp
             user.last_login = datetime.utcnow()
             await self.db.commit()
             

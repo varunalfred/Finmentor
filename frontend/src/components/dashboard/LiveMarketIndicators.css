@@ -1,0 +1,278 @@
+.live-market-indicators {
+  width: 100%;
+  background: white;
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin: 1.5rem 0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.market-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.5rem;
+}
+
+.market-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #1a1a1a;
+  margin: 0;
+}
+
+.slide-dots {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #d1d5db;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.dot:hover {
+  background: #9ca3af;
+}
+
+.dot.active {
+  background: #0066FF;
+  width: 24px;
+  border-radius: 4px;
+}
+
+.market-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+}
+
+.market-index-card {
+  background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  transition: all 0.3s ease;
+}
+
+.market-index-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 6px 12px rgba(0, 102, 255, 0.15);
+  border-color: #0066FF;
+}
+
+.index-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.index-value {
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: #1a1a1a;
+  line-height: 1.2;
+}
+
+.index-change {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.index-change.positive {
+  color: #10b981;
+}
+
+.index-change.negative {
+  color: #ef4444;
+}
+
+.change-icon {
+  font-size: 0.75rem;
+}
+
+.change-text {
+  font-weight: 600;
+}
+
+/* Loading skeleton */
+.market-index-card.skeleton {
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: skeleton-loading 1.5s infinite;
+}
+
+.skeleton-name {
+  height: 14px;
+  background: #e0e0e0;
+  border-radius: 4px;
+  width: 80%;
+}
+
+.skeleton-value {
+  height: 24px;
+  background: #e0e0e0;
+  border-radius: 4px;
+  width: 90%;
+}
+
+.skeleton-change {
+  height: 14px;
+  background: #e0e0e0;
+  border-radius: 4px;
+  width: 60%;
+}
+
+@keyframes skeleton-loading {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+/* Error state */
+.market-error {
+  text-align: center;
+  padding: 2rem;
+  color: #6b7280;
+}
+
+.market-error p {
+  margin-bottom: 1rem;
+  font-size: 1rem;
+}
+
+.retry-btn {
+  background: #0066FF;
+  color: white;
+  border: none;
+  padding: 0.6rem 1.5rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.retry-btn:hover {
+  background: #0052cc;
+  transform: translateY(-2px);
+}
+
+/* Dark mode */
+body.dark .live-market-indicators {
+  background: #1f2937;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+body.dark .market-title {
+  color: #f3f4f6;
+}
+
+body.dark .market-index-card {
+  background: linear-gradient(135deg, #374151 0%, #1f2937 100%);
+  border-color: #4b5563;
+}
+
+body.dark .market-index-card:hover {
+  border-color: #0066FF;
+}
+
+body.dark .index-name {
+  color: #9ca3af;
+}
+
+body.dark .index-value {
+  color: #f3f4f6;
+}
+
+/* Responsive */
+@media (max-width: 1024px) {
+  .market-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.8rem;
+  }
+
+  .market-index-card {
+    padding: 1rem;
+  }
+
+  .index-value {
+    font-size: 1.4rem;
+  }
+}
+
+@media (max-width: 768px) {
+  .live-market-indicators {
+    padding: 1.2rem;
+    margin: 1rem 0;
+  }
+
+  .market-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1rem;
+  }
+
+  .market-title {
+    font-size: 1.3rem;
+  }
+
+  .market-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.6rem;
+  }
+
+  .market-index-card {
+    padding: 0.9rem;
+  }
+
+  .index-name {
+    font-size: 0.75rem;
+  }
+
+  .index-value {
+    font-size: 1.3rem;
+  }
+
+  .index-change {
+    font-size: 0.8rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .market-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .market-index-card {
+    padding: 1rem;
+  }
+
+  .slide-dots {
+    gap: 0.4rem;
+  }
+
+  .dot {
+    width: 6px;
+    height: 6px;
+  }
+
+  .dot.active {
+    width: 20px;
+  }
+}

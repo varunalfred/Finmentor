@@ -35,29 +35,33 @@ logger = logging.getLogger(__name__)
 # Each signature is like a specialized expert with specific inputs/outputs
 
 class FinancialAnalysis(dspy.Signature):
-    """Analyze financial queries with market context"""
-    # INPUTS: What this agent needs to reason
-    question = dspy.InputField(desc="user's financial question")  # The main query to analyze
-    user_profile = dspy.InputField(desc="student/professional/beginner")  # Adapt response to user level
-    market_context = dspy.InputField(desc="current market data and trends")  # Real market conditions
-
-    # OUTPUTS: What this agent produces after reasoning
-    analysis = dspy.OutputField(desc="detailed financial analysis")  # Main analysis result
-    recommendation = dspy.OutputField(desc="actionable recommendation")  # What user should do
-    risk_level = dspy.OutputField(desc="low/medium/high")  # Risk assessment
-    confidence = dspy.OutputField(desc="confidence score 0-100")  # How sure the agent is
+    """Analyze financial queries with knowledge base priority - Analysis Agent"""
+    # INPUTS for financial analysis
+    question = dspy.InputField(desc="financial question or scenario")
+    user_profile = dspy.InputField(desc="user experience level and preferences")
+    market_context = dspy.InputField(desc="current market conditions")
+    knowledge_base_context = dspy.InputField(desc="retrieved relevant financial documents and data")
+    
+    # OUTPUTS after reasoning
+    analysis = dspy.OutputField(desc="comprehensive financial analysis combining KB and market data")
+    recommendation = dspy.OutputField(desc="actionable recommendation")
+    risk_level = dspy.OutputField(desc="low/moderate/high")
+    confidence = dspy.OutputField(desc="0-100 confidence score")
+    sources_used = dspy.OutputField(desc="sources: 'knowledge_base', 'market_data', 'llm_knowledge', or combination")
 
 class ConceptExplanation(dspy.Signature):
-    """Explain financial concepts adaptively - Education Agent"""
+    """Explain financial concepts using knowledge base and additional sources - Education Agent"""
     # INPUTS for educational reasoning
     concept = dspy.InputField(desc="financial concept to explain")  # e.g., "P/E ratio"
     user_level = dspy.InputField(desc="beginner/intermediate/advanced")  # Determines complexity
-    context = dspy.InputField(desc="why user is asking")  # Helps tailor explanation
-
+    knowledge_base_context = dspy.InputField(desc="retrieved documents from financial glossary and knowledge base")  # RAG context
+    kb_relevance_score = dspy.InputField(desc="how relevant the KB documents are (0-1)")  # Quality indicator
+    
     # OUTPUTS after educational reasoning
-    explanation = dspy.OutputField(desc="clear explanation suited to user level")  # Adapted explanation
-    examples = dspy.OutputField(desc="practical examples")  # Real-world examples
-    related_concepts = dspy.OutputField(desc="related topics to explore")  # Learning path
+    explanation = dspy.OutputField(desc="clear explanation combining KB and LLM knowledge, suited to user level")
+    examples = dspy.OutputField(desc="practical examples from KB or generated")
+    related_concepts = dspy.OutputField(desc="related topics to explore")
+    sources_used = dspy.OutputField(desc="sources: 'knowledge_base', 'llm_knowledge', or 'both'")
 
 class RiskAssessment(dspy.Signature):
     """Assess investment risk and user psychology - Risk Agent"""
@@ -200,33 +204,41 @@ class HybridFinMentorSystem:
         # DSPy uses LiteLLM under the hood, so we use "provider/model" format
         # Check environment variables to determine which LLM to use
         # Priority order: Gemini > OpenAI > Claude
-        if os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"):
+        if os.getenv("GEMINI_API_KEY"):
             # Preferred: Use Google's Gemini for best performance/cost ratio
             # Set the API key as environment variable for LiteLLM
-            os.environ["GEMINI_API_KEY"] = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+            os.environ["GEMINI_API_KEY"] = os.getenv("GEMINI_API_KEY")
+            
+            # Configure LiteLLM retry behavior with exponential backoff
+            # This prevents "retry storms" that worsen rate limiting
+            os.environ["LITELLM_NUM_RETRIES"] = "3"  # Max 3 retries
+            os.environ["LITELLM_RETRY_DELAY"] = "2"  # Start with 2s delay (exponential: 2s, 4s, 8s)
             
             lm = dspy.LM(
-                model="gemini/" + self.config.get("model", "gemini-1.5-flash"),  # LiteLLM format
+                model="gemini/" + self.config.get("model", "gemini-2.5-flash"),  # LiteLLM format
                 temperature=self.config.get("temperature", 0.7),  # 0.7 = balanced creativity
-                max_tokens=self.config.get("max_tokens", 1000)   # Response length limit
+                max_tokens=self.config.get("max_tokens", 2500),   # Optimal for detailed responses (researched value)
+                # Retry configuration for handling 503 errors (overloaded servers)
+                num_retries=3,  # Retry up to 3 times with exponential backoff
+                api_base=None  # Use default Gemini endpoint
             )
-            logger.info(f"DSPy initialized with Gemini: {self.config.get('model', 'gemini-1.5-flash')}")
+            logger.info(f"DSPy initialized with Gemini: {self.config.get('model', 'gemini-2.5-flash')} (3 retries with exponential backoff: 2s, 4s, 8s)")
 
         elif os.getenv("OPENAI_API_KEY"):
             # Alternative: OpenAI GPT models
             lm = dspy.LM(
                 model="openai/" + self.config.get("model", "gpt-3.5-turbo"),  # LiteLLM format
                 temperature=self.config.get("temperature", 0.7),
-                max_tokens=self.config.get("max_tokens", 1000)
+                max_tokens=self.config.get("max_tokens", 2500)  # Optimal for detailed responses
             )
             logger.info(f"DSPy initialized with OpenAI: {self.config.get('model', 'gpt-3.5-turbo')}")
 
         elif os.getenv("ANTHROPIC_API_KEY"):
-            # Alternative: Anthropic's Claude
+            # Alternative: Anthropic Claude
             lm = dspy.LM(
                 model="anthropic/" + self.config.get("model", "claude-3-haiku-20240307"),  # LiteLLM format
                 temperature=self.config.get("temperature", 0.7),
-                max_tokens=self.config.get("max_tokens", 1000)
+                max_tokens=self.config.get("max_tokens", 2500)  # Optimal for detailed responses
             )
             logger.info(f"DSPy initialized with Claude: {self.config.get('model', 'claude-3-haiku-20240307')}")
 
@@ -234,22 +246,24 @@ class HybridFinMentorSystem:
             # No API key found - cannot proceed
             raise ValueError("No LLM API key found. Set GEMINI_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY")
 
-        # Configure DSPy to use the selected language model
-        dspy.settings.configure(lm=lm)
+        # Store LM instance instead of using global configure to avoid async issues
+        # Each instance maintains its own DSPy context
+        self.lm = lm
 
     def _init_langchain(self):
         """Initialize LangChain components"""
         import os
 
         # LLM for LangChain - support multiple providers
-        if os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"):
+        if os.getenv("GEMINI_API_KEY"):
             from langchain_google_genai import ChatGoogleGenerativeAI
             self.llm = ChatGoogleGenerativeAI(
-                model=self.config.get("model", "gemini-pro"),
-                google_api_key=os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"),
-                temperature=0
+                model=self.config.get("model", "gemini-2.5-flash"),
+                google_api_key=os.getenv("GEMINI_API_KEY"),
+                temperature=0,
+                max_retries=3  # Retry up to 3 times for 503 errors
             )
-            logger.info("LangChain using Gemini")
+            logger.info(f"LangChain using Gemini: {self.config.get('model', 'gemini-2.5-flash')} (3 retries enabled)")
         elif os.getenv("OPENAI_API_KEY"):
             from langchain_openai import ChatOpenAI
             self.llm = ChatOpenAI(
@@ -280,12 +294,60 @@ class HybridFinMentorSystem:
         # Create agent prompt
         prompt = self._create_prompt()
 
-        # Create agent
-        self.agent = create_openai_tools_agent(
-            llm=self.llm,
-            tools=self.tools,
-            prompt=prompt
-        )
+        # DEBUG: Log before creating agent
+        print("\n" + "="*70)
+        print(f"DEBUG: Creating agent with {len(self.tools)} tools")
+        print(f"DEBUG: LLM: {self.llm.__class__.__name__}")
+        print(f"DEBUG: Model: {self.config.get('model', 'unknown')}")
+        print("DEBUG: Tool names being passed to LangChain:")
+        for i, tool in enumerate(self.tools):
+            print(f"  {i+1}. '{tool.name}'")
+        print("="*70 + "\n")
+        
+        logger.info(f"Creating agent with {len(self.tools)} tools and LLM: {self.llm.__class__.__name__}")
+        logger.info(f"LLM model: {self.config.get('model', 'unknown')}")
+        
+        # EXPERIMENTAL: Try binding tools directly to Gemini LLM
+        # The issue is that create_openai_tools_agent uses OpenAI format
+        # which may not be compatible with Gemini's function calling API
+        print("DEBUG: Attempting to bind tools to LLM using bind_tools()...")
+        try:
+            # Bind tools to the LLM - this is Gemini-compatible
+            self.llm_with_tools = self.llm.bind_tools(self.tools)
+            print("DEBUG: Tools bound successfully to LLM")
+        except Exception as e:
+            print(f"DEBUG: WARNING - Could not bind tools: {e}")
+            print("DEBUG: Falling back to agent without tool binding")
+            self.llm_with_tools = self.llm
+        
+        # Create agent - Try ReAct agent instead of OpenAI tools agent
+        # ReAct uses a different format that may be more compatible with Gemini
+        from langchain.agents import create_react_agent
+        try:
+            print("DEBUG: Trying ReAct agent (more compatible with Gemini)...")
+            # ReAct agent uses a simpler format
+            self.agent = create_react_agent(
+                llm=self.llm,
+                tools=self.tools,
+                prompt=prompt
+            )
+            print("DEBUG: ReAct agent created successfully\n")
+            logger.info("ReAct agent created successfully")
+        except Exception as e:
+            print(f"DEBUG: ReAct agent failed, trying OpenAI tools agent: {e}")
+            # Fallback to OpenAI tools agent
+            try:
+                self.agent = create_openai_tools_agent(
+                    llm=self.llm,
+                    tools=self.tools,
+                    prompt=prompt
+                )
+                print("DEBUG: OpenAI tools agent created successfully\n")
+                logger.info("OpenAI tools agent created successfully")
+            except Exception as e2:
+                print(f"DEBUG: Failed to create any agent: {e2}\n")
+                logger.error(f"Failed to create agent: {e2}")
+                raise
 
         # Create executor
         self.agent_executor = AgentExecutor(
@@ -299,47 +361,86 @@ class HybridFinMentorSystem:
 
         logger.info("LangChain components initialized successfully")
 
+    def _run_async_in_thread(self, coro):
+        """
+        Run async function in a separate thread with its own event loop.
+        This isolates the async operation from the main event loop to avoid conflicts.
+        """
+        def run_in_new_loop():
+            # Create a completely new event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                result = loop.run_until_complete(coro)
+                return result
+            except Exception as e:
+                logger.error(f"Error in async thread: {e}")
+                return f"Error: {str(e)}"
+            finally:
+                # Clean up
+                try:
+                    # Cancel any pending tasks
+                    pending = asyncio.all_tasks(loop)
+                    for task in pending:
+                        task.cancel()
+                    # Run loop one last time to process cancellations
+                    if pending:
+                        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                except Exception:
+                    pass
+                finally:
+                    loop.close()
+                    asyncio.set_event_loop(None)
+        
+        # Run in thread pool to completely isolate from current event loop
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(run_in_new_loop)
+            return future.result(timeout=60)  # 60 second timeout
+
     def _create_tools(self) -> List[Tool]:
         """Create LangChain tools that use DSPy for reasoning and real financial tools"""
 
         # Initialize financial tools
         self.financial_tools = FinancialTools()
 
+        logger.info("Creating LangChain tools...")
+        
         tools = [
-            # DSPy-based reasoning tools - using Tool instead of StructuredTool
+            # DSPy-based reasoning tools - wrap async functions to make them synchronous for LangChain
             Tool(
                 name="analyze_financial_query",
                 description="Analyze complex financial questions with market context. Input should be a query string.",
-                func=self._tool_analyze_query
+                func=lambda q: self._run_async_in_thread(self._tool_analyze_query(q))
             ),
             Tool(
                 name="explain_concept",
                 description="Explain financial concepts adapted to user level. Input should be a concept name.",
-                func=self._tool_explain_concept
+                func=lambda c: self._run_async_in_thread(self._tool_explain_concept(c))
             ),
             Tool(
                 name="assess_risk",
                 description="Assess investment risk and psychological factors. Input should be an investment description.",
-                func=self._tool_assess_risk
+                func=lambda i: self._run_async_in_thread(self._tool_assess_risk(i))
             ),
 
             # Real market data tools
             Tool(
                 name="get_stock_data",
                 description="Get real-time stock data including price, volume, PE ratio, etc. Input should be a stock symbol like AAPL or GOOGL.",
-                func=lambda symbol: asyncio.run(self.financial_tools.get_real_stock_data(symbol))
+                func=lambda symbol: self._run_async_in_thread(self.financial_tools.get_real_stock_data(symbol))
             ),
             Tool(
                 name="get_historical_prices",
                 description="Get historical price data for a stock. Input should be a stock symbol.",
-                func=lambda symbol: asyncio.run(
+                func=lambda symbol: self._run_async_in_thread(
                     self.financial_tools.get_historical_prices(symbol, "1mo")
                 )
             ),
             Tool(
                 name="calculate_technical_indicators",
                 description="Calculate RSI, moving averages, and other technical indicators. Input should be a stock symbol.",
-                func=lambda symbol: asyncio.run(
+                func=lambda symbol: self._run_async_in_thread(
                     self.financial_tools.calculate_technical_indicators(symbol)
                 )
             ),
@@ -348,14 +449,14 @@ class HybridFinMentorSystem:
             Tool(
                 name="calculate_portfolio_metrics",
                 description="Calculate portfolio Sharpe ratio, volatility, and other metrics. Input should be JSON with holdings and prices.",
-                func=lambda data: asyncio.run(
+                func=lambda data: self._run_async_in_thread(
                     self.financial_tools.calculate_portfolio_metrics(data.get('holdings', []), data.get('prices', {}))
                 )
             ),
             Tool(
                 name="calculate_position_size",
                 description="Calculate optimal position size based on risk management. Input should be account_size.",
-                func=lambda account_size: asyncio.run(
+                func=lambda account_size: self._run_async_in_thread(
                     self.financial_tools.calculate_position_size(
                         account_size, 2, 100, 95  # defaults
                     )
@@ -364,7 +465,7 @@ class HybridFinMentorSystem:
             Tool(
                 name="calculate_compound_interest",
                 description="Calculate compound interest and future value. Input should be principal amount.",
-                func=lambda principal: asyncio.run(
+                func=lambda principal: self._run_async_in_thread(
                     self.financial_tools.calculate_compound_interest(
                         principal, 7, 10  # 7% for 10 years as default
                     )
@@ -373,67 +474,149 @@ class HybridFinMentorSystem:
             Tool(
                 name="calculate_loan_payment",
                 description="Calculate loan/mortgage payments. Input should be principal amount.",
-                func=lambda principal: asyncio.run(
+                func=lambda principal: self._run_async_in_thread(
                     self.financial_tools.calculate_loan_payment(principal, 5, 30)  # 5% for 30 years default
                 )
             ),
             Tool(
                 name="compare_stocks",
                 description="Compare multiple stocks on various metrics. Input should be comma-separated stock symbols like 'AAPL,GOOGL,MSFT'.",
-                func=lambda symbols: asyncio.run(
+                func=lambda symbols: self._run_async_in_thread(
                     self.financial_tools.compare_stocks(symbols.split(',') if isinstance(symbols, str) else symbols)
                 )
             )
         ]
+        
+        # DEBUG: Log all tool names and validate them
+        logger.info(f"Created {len(tools)} tools:")
+        for i, tool in enumerate(tools):
+            tool_name = tool.name if hasattr(tool, 'name') else 'unknown'
+            logger.info(f"  Tool {i+1}: '{tool_name}'")
+            
+            # Validate tool name
+            if tool_name:
+                is_valid = (
+                    tool_name[0].isalpha() or tool_name[0] == '_'
+                ) and all(c.isalnum() or c in '_.:-' for c in tool_name) and len(tool_name) <= 64
+                
+                if not is_valid:
+                    logger.error(f"  ❌ INVALID tool name: '{tool_name}' - Does not meet Gemini requirements")
+                else:
+                    logger.info(f"  ✓ Valid tool name")
+        
         return tools
 
     def _create_prompt(self) -> ChatPromptTemplate:
-        """Create the main agent prompt"""
-        system_message = """You are FinMentor AI, a sophisticated financial advisor that combines
-        deep market knowledge with educational capabilities. You help users understand finance
-        and make informed decisions.
+        """Create the main agent prompt - ReAct format"""
+        from langchain.prompts import PromptTemplate
+        
+        # ReAct agent needs a template with {tools}, {tool_names}, {agent_scratchpad}, and {input}
+        template = """You are FinMentor AI, a sophisticated financial advisor that combines
+deep market knowledge with educational capabilities. You help users understand finance
+and make informed decisions.
 
-        Your approach:
-        1. First understand what the user is asking
-        2. Use appropriate tools to gather information and analyze
-        3. Provide clear, actionable advice suited to their level
-        4. Always consider risk and user psychology
-        5. Educate while advising
+You have access to the following tools:
 
-        Current user profile: {user_profile}
-        Current datetime: {current_time}
-        """
+{tools}
 
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", system_message),
-            MessagesPlaceholder(variable_name="chat_history"),
-            ("user", "{input}"),
-            MessagesPlaceholder(variable_name="agent_scratchpad")
-        ])
+Use the following format:
+
+Question: the input question you must answer
+Thought: you should always think about what to do
+Action: the action to take, should be one of [{tool_names}]
+Action Input: the input to the action
+Observation: the result of the action
+... (this Thought/Action/Action Input/Observation can repeat N times)
+Thought: I now know the final answer
+Final Answer: the final answer to the original input question
+
+Begin!
+
+Question: {input}
+Thought: {agent_scratchpad}"""
+
+        prompt = PromptTemplate.from_template(template)
 
         return prompt
 
     async def _tool_analyze_query(self, query: str) -> str:
-        """Use DSPy to analyze financial queries"""
+        """
+        RAG-First Financial Analysis Tool:
+        1. Query knowledge base for relevant financial information
+        2. Get current market context
+        3. Combine KB + market data + LLM reasoning
+        4. Cite sources used
+        """
         try:
             self.metrics["dspy_calls"] += 1
+            kb_context = ""
+            sources = []
 
-            # Get market context (mock for now, replace with real API)
+            # STEP 1: Retrieve from knowledge base
+            if self.agentic_rag and self.user_profile.get("user_id"):
+                try:
+                    logger.info(f"Querying knowledge base for analysis: {query}")
+                    
+                    # Create a new DB session for this event loop (in case we're in a different thread)
+                    from services.database import db_service
+                    async with db_service.AsyncSessionLocal() as new_session:
+                        # Temporarily set the new session
+                        old_session = self.agentic_rag.db
+                        self.agentic_rag.set_db_session(new_session)
+                        
+                        try:
+                            rag_result = await self.agentic_rag.retrieve_and_generate_context(
+                                query=query,
+                                user_id=self.user_profile.get("user_id"),
+                                user_context=self.user_profile
+                            )
+                        finally:
+                            # Restore original session
+                            self.agentic_rag.db = old_session
+                    
+                    retrieved_docs = rag_result.get("context", [])
+                    if retrieved_docs:
+                        kb_context = "\n\n".join([
+                            f"[KB Document {i+1}] {doc}" 
+                            for i, doc in enumerate(retrieved_docs[:5])
+                        ])
+                        sources.append("Knowledge Base")
+                        logger.info(f"Retrieved {len(retrieved_docs)} documents from KB")
+                    else:
+                        kb_context = "No relevant documents found in knowledge base."
+                except Exception as e:
+                    logger.error(f"Error retrieving from knowledge base: {e}")
+                    kb_context = "Knowledge base unavailable."
+            else:
+                kb_context = "Knowledge base not configured."
+
+            # STEP 2: Get market context
             market_context = await self._get_market_context()
+            if market_context:
+                sources.append("Market Data")
 
-            # Use DSPy for reasoning
-            result = self.dspy_reasoner.forward(
-                query_type="analyze",
-                question=query,
-                user_profile=self.user_profile.get("type", "beginner"),
-                market_context=market_context
-            )
+            # STEP 3: Use DSPy for reasoning with all available context
+            # Use context manager to avoid async configuration issues
+            with dspy.context(lm=self.lm):
+                result = self.dspy_reasoner(
+                    query_type="analyze",
+                    question=query,
+                    user_profile=self.user_profile.get("type", "beginner"),
+                    market_context=market_context,
+                    knowledge_base_context=kb_context
+                )
+
+            # Track sources
+            if result.sources_used:
+                if "llm" in result.sources_used.lower():
+                    sources.append("LLM Analysis")
+            source_text = " + ".join(sources) if sources else "LLM Analysis"
 
             # Update confidence metric
             confidence = float(result.confidence)
             self._update_avg_confidence(confidence)
 
-            return f"""
+            response = f"""
 📊 Analysis: {result.analysis}
 
 💡 Recommendation: {result.recommendation}
@@ -441,24 +624,96 @@ class HybridFinMentorSystem:
 ⚠️ Risk Level: {result.risk_level}
 
 📈 Confidence: {result.confidence}%
+
+📖 Sources: {source_text}
 """
+            
+            logger.info(f"Financial analysis completed using: {source_text}")
+            return response
+
         except Exception as e:
             logger.error(f"Error in analyze query: {e}")
             return f"Error analyzing query: {str(e)}"
 
     async def _tool_explain_concept(self, concept: str) -> str:
-        """Use DSPy to explain financial concepts"""
+        """
+        RAG-First Educational Tool:
+        1. Query knowledge base first (highest priority)
+        2. Fall back to LLM knowledge if KB insufficient
+        3. Combine and cite sources
+        """
         try:
             self.metrics["dspy_calls"] += 1
+            kb_context = ""
+            kb_relevance = 0.0
+            sources = []
 
-            result = self.dspy_reasoner.forward(
-                query_type="explain",
-                concept=concept,
-                user_level=self.user_profile.get("education_level", "beginner"),
-                context="User requested explanation"
-            )
+            # STEP 1: Retrieve from knowledge base (PRIMARY SOURCE)
+            if self.agentic_rag and self.user_profile.get("user_id"):
+                try:
+                    logger.info(f"Querying knowledge base for concept: {concept}")
+                    
+                    # Create a new DB session for this event loop (in case we're in a different thread)
+                    from services.database import db_service
+                    async with db_service.AsyncSessionLocal() as new_session:
+                        # Temporarily set the new session
+                        old_session = self.agentic_rag.db
+                        self.agentic_rag.set_db_session(new_session)
+                        
+                        try:
+                            rag_result = await self.agentic_rag.retrieve_and_generate_context(
+                                query=concept,
+                                user_id=self.user_profile.get("user_id"),
+                                user_context=self.user_profile
+                            )
+                        finally:
+                            # Restore original session
+                            self.agentic_rag.db = old_session
+                    
+                    retrieved_docs = rag_result.get("context", [])
+                    if retrieved_docs:
+                        # Format retrieved documents
+                        kb_context = "\n\n".join([
+                            f"[KB Document {i+1}] {doc}" 
+                            for i, doc in enumerate(retrieved_docs[:5])  # Top 5 docs
+                        ])
+                        # Calculate relevance based on number and quality of docs
+                        kb_relevance = min(len(retrieved_docs) / 3.0, 1.0)  # 3+ docs = high relevance
+                        sources.append("Knowledge Base")
+                        logger.info(f"Retrieved {len(retrieved_docs)} documents from KB (relevance: {kb_relevance:.2f})")
+                    else:
+                        logger.info("No documents found in knowledge base")
+                        kb_context = "No relevant documents found in knowledge base."
+                except Exception as e:
+                    logger.error(f"Error retrieving from knowledge base: {e}")
+                    kb_context = "Knowledge base unavailable."
+                    kb_relevance = 0.0
+            else:
+                kb_context = "Knowledge base not configured."
+                kb_relevance = 0.0
+            
+            # STEP 2: Use DSPy with KB context (will use LLM knowledge if KB insufficient)
+            # Note: Using __call__() instead of .forward() as recommended by DSPy
+            # Use context manager to avoid async configuration issues
+            with dspy.context(lm=self.lm):
+                result = self.dspy_reasoner(
+                    query_type="explain",
+                    concept=concept,
+                    user_level=self.user_profile.get("education_level", "beginner"),
+                    knowledge_base_context=kb_context,
+                    kb_relevance_score=str(kb_relevance)
+                )
 
-            return f"""
+            # Track which sources were used
+            if result.sources_used:
+                if "llm" in result.sources_used.lower():
+                    sources.append("LLM Knowledge")
+                source_text = " + ".join(sources) if sources else "LLM Knowledge"
+            else:
+                source_text = "Knowledge Base" if kb_relevance > 0.3 else "LLM Knowledge"
+
+            # STEP 3: Format response with source attribution
+            response = f"""
 📚 {concept}
 
 {result.explanation}
@@ -467,7 +722,13 @@ class HybridFinMentorSystem:
 {result.examples}
 
 🔗 Related Concepts: {result.related_concepts}
+
+📖 Sources: {source_text}
 """
+            
+            logger.info(f"Concept explanation completed using: {source_text}")
+            return response
+
         except Exception as e:
             logger.error(f"Error explaining concept: {e}")
             return f"Error explaining concept: {str(e)}"
@@ -479,12 +740,14 @@ class HybridFinMentorSystem:
 
             market_conditions = await self._get_market_conditions()
 
-            result = self.dspy_reasoner.forward(
-                query_type="risk",
-                investment=investment,
-                user_profile=json.dumps(self.user_profile),
-                market_conditions=market_conditions
-            )
+            # Use DSPy context manager to avoid async configuration issues
+            with dspy.context(lm=self.lm):
+                result = self.dspy_reasoner.forward(
+                    query_type="risk",
+                    investment=investment,
+                    user_profile=json.dumps(self.user_profile),
+                    market_conditions=market_conditions
+                )
 
             return f"""
 ⚠️ Risk Assessment for {investment}
@@ -564,12 +827,20 @@ Investment Returns:
         query: str,
         user_profile: Dict[str, Any],
         voice_input: bool = False,
-        rag_context: Optional[Dict] = None
+        rag_context: Optional[Dict] = None,
+        skip_orchestration: bool = False  # NEW: Prevent infinite recursion
     ) -> Dict[str, Any]:
         """
         Main entry point for processing user queries
         Combines Agentic RAG + DSPy reasoning + LangChain orchestration
         Now with Multi-Agent Orchestration for complex queries
+        
+        Args:
+            query: User's question
+            user_profile: User information
+            voice_input: Whether input is from voice
+            rag_context: Pre-fetched RAG context (optional)
+            skip_orchestration: If True, bypass multi-agent orchestration (prevents recursion)
         """
         start_time = datetime.now()
         self.user_profile = user_profile
@@ -587,16 +858,21 @@ Investment Returns:
                 logger.info(f"RAG retrieved {len(rag_context.get('context', []))} documents")
 
             # Check if this is a complex query requiring multi-agent orchestration
-            from agents.orchestrator import MultiAgentOrchestrator, QueryComplexity
+            # IMPORTANT: Only orchestrate if NOT already inside an orchestrator (prevents infinite recursion)
+            from agents.smart_orchestrator import SmartMultiAgentOrchestrator, QueryComplexity
             from services.agentic_rag import QueryIntent
 
-            if rag_context:
-                orchestrator = MultiAgentOrchestrator(self)
+            if rag_context and not skip_orchestration:
+                orchestrator = SmartMultiAgentOrchestrator(
+                    hybrid_system=self,
+                    rpm_limit=10,  # Gemini free tier
+                    max_concurrent=2  # Safe batching
+                )
                 intent = QueryIntent[rag_context["intent"].upper()] if "intent" in rag_context else QueryIntent.GENERAL_CHAT
                 complexity = orchestrator.assess_complexity(query, intent)
 
-                # Use orchestrator for complex queries
-                if complexity >= QueryComplexity.MODERATE:
+                # Use orchestrator for complex queries (compare enum values, not enums themselves)
+                if complexity.value >= QueryComplexity.MODERATE.value:
                     logger.info(f"Using multi-agent orchestration for {complexity.name} query")
                     orchestrated_result = await orchestrator.process_complex_query(
                         query=query,
@@ -605,44 +881,67 @@ Investment Returns:
                     return orchestrated_result
 
             # Step 2: Prepare enhanced input with RAG context
-            agent_input = {
-                "input": query,
-                "user_profile": json.dumps(user_profile),
-                "current_time": datetime.now().isoformat()
-            }
-
+            # ReAct agent only accepts 'input' key, so we merge all context into it
+            enriched_query = query
+            
             # Add RAG context if available
             if rag_context and rag_context.get("context"):
                 # Format context for the prompt
-                context_str = "\n\nRelevant Context:\n"
+                context_str = "\n\nRelevant Context from Knowledge Base:\n"
                 for ctx in rag_context["context"][:3]:  # Top 3 most relevant
                     context_str += f"- {ctx.get('content', '')[:200]}...\n"
-
-                agent_input["context"] = context_str
-                agent_input["intent"] = rag_context.get("intent", "general")
+                enriched_query = context_str + "\n\nUser Query: " + query
+            
+            # Add user profile context
+            user_level = user_profile.get("education_level", "beginner")
+            enriched_query = f"[User Level: {user_level}]\n\n{enriched_query}"
+            
+            agent_input = {
+                "input": enriched_query
+            }
 
             # Step 3: Process with LangChain agent (which uses DSPy tools)
             self.metrics["langchain_calls"] += 1
-            response = await self.agent_executor.ainvoke(agent_input)
+            logger.info(f"Invoking LangChain agent with query: '{query[:50]}...'")
+            logger.info(f"Agent input keys: {list(agent_input.keys())}")
+            
+            try:
+                response = await self.agent_executor.ainvoke(agent_input)
+                logger.info("✓ Agent executor completed successfully")
+                logger.info(f"Response keys: {list(response.keys()) if response else 'None'}")
+            except Exception as e:
+                logger.error(f"❌ Agent executor failed: {e}")
+                logger.error(f"Error type: {type(e).__name__}")
+                raise
 
             # Step 4: Self-reflection for critical queries
-            final_response = response["output"]
+            if not response:
+                raise ValueError("Agent executor returned None")
+            
+            final_response = response.get("output", "")
+            if not final_response:
+                logger.warning(f"No output in response. Response keys: {list(response.keys())}")
+                final_response = str(response)
+            
             reflection = None
 
-            if rag_context and rag_context.get("reflection", {}).get("needed"):
-                # Perform self-reflection
-                reflection = await self.agentic_rag.self_reflect(
-                    query=query,
-                    response=final_response,
-                    context=rag_context.get("context", [])
-                )
+            # Only do reflection if we have rag_context and it has reflection data
+            if rag_context and isinstance(rag_context, dict):
+                reflection_data = rag_context.get("reflection")
+                if reflection_data and isinstance(reflection_data, dict) and reflection_data.get("needed"):
+                    # Perform self-reflection
+                    reflection = await self.agentic_rag.self_reflect(
+                        query=query,
+                        response=final_response,
+                        context=rag_context.get("context", [])
+                    )
 
-                # Add disclaimers if needed
-                if reflection.get("needs_revision"):
-                    if "disclaimer" in str(reflection.get("suggestions", [])):
-                        final_response += "\n\n⚠️ Disclaimer: This is not personalized financial advice. Please consult with a qualified financial advisor."
-                    if "risk" in str(reflection.get("suggestions", [])):
-                        final_response += "\n\n⚠️ Risk Warning: All investments carry risk. Past performance does not guarantee future results."
+                    # Add disclaimers if needed
+                    if reflection and isinstance(reflection, dict) and reflection.get("needs_revision"):
+                        if "disclaimer" in str(reflection.get("suggestions", [])):
+                            final_response += "\n\n⚠️ Disclaimer: This is not personalized financial advice. Please consult with a qualified financial advisor."
+                        if "risk" in str(reflection.get("suggestions", [])):
+                            final_response += "\n\n⚠️ Risk Warning: All investments carry risk. Past performance does not guarantee future results."
 
             # Step 5: Store message with embedding for future retrieval
             if self.agentic_rag and user_profile.get("user_id"):
@@ -673,7 +972,9 @@ Investment Returns:
             }
 
         except Exception as e:
+            import traceback
             logger.error(f"Error processing query: {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return {
                 "success": False,
                 "error": str(e),

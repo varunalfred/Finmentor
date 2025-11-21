@@ -123,7 +123,7 @@ def validate_env():
     print("⚙️  OPTIONAL CONFIGURATION:")
     print("-" * 70)
     
-    model = os.getenv("DEFAULT_MODEL", "gemini-pro")
+    model = os.getenv("DEFAULT_MODEL", "gemini-2.0-flash-exp")
     print_success(f"DEFAULT_MODEL: {model}")
     
     temp = os.getenv("DEFAULT_TEMPERATURE", "0.7")

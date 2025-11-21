@@ -64,7 +64,7 @@ async def test_hybrid_system_integration():
 
     # Create hybrid system
     config = {
-        "model": "gemini-pro",
+        "model": "gemini-2.0-flash-exp",
         "temperature": 0.7,
         "max_tokens": 1000
     }

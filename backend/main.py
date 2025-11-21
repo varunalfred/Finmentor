@@ -16,10 +16,10 @@ from dotenv import load_dotenv  # Load .env file
 load_dotenv()
 
 # Import what we actually have
-from routers import chat, auth, rag  # API route handlers
+from routers import chat, auth, rag, market, profile  # API route handlers
 from services.database import init_db, db_service  # Database initialization and service
 from agents.hybrid_core import HybridFinMentorSystem  # Main AI system (DSPy + LangChain)
-from agents.orchestrator import MultiAgentOrchestrator  # Manages multiple agents
+from agents.smart_orchestrator import SmartMultiAgentOrchestrator  # Rate-limited, dependency-aware orchestrator
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)  # Set log level to INFO (shows important events)
@@ -43,13 +43,17 @@ async def lifespan(app: FastAPI):
 
     # Initialize hybrid system
     config = {
-        "model": os.getenv("DEFAULT_MODEL", "gemini-pro"),  # Get model from env or use gemini-pro
+        "model": os.getenv("DEFAULT_MODEL", "gemini-2.0-flash-exp"),  # Get model from env or use gemini-2.0-flash-exp
         "temperature": 0.7,  # Creativity level (0=deterministic, 1=creative)
         "max_tokens": 1000  # Max response length
     }
     hybrid_system = HybridFinMentorSystem(config)  # Create main AI system
-    orchestrator = MultiAgentOrchestrator(hybrid_system)  # Create agent manager
-    logger.info("Multi-agent system initialized")  # Confirm AI ready
+    orchestrator = SmartMultiAgentOrchestrator(
+        hybrid_system=hybrid_system,
+        rpm_limit=10,  # Gemini free tier limit
+        max_concurrent=2  # Safe for free tier (batched parallel execution)
+    )
+    logger.info("Multi-agent system initialized with rate limiting (10 RPM, 2 concurrent)")  # Confirm AI ready
 
     logger.info("Backend started successfully!")  # All systems go!
 
@@ -89,6 +93,8 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])  # Auth endpoints at /api/auth/*
 app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])  # Chat endpoints at /api/chat/*
 app.include_router(rag.router, prefix="/api/rag", tags=["RAG"])  # RAG endpoints at /api/rag/*
+app.include_router(market.router, prefix="/api/market", tags=["Market Data"])  # Market endpoints at /api/market/*
+app.include_router(profile.router, tags=["Profile"])  # Profile endpoints at /api/profile, /api/watchlist, etc.
 
 # Note: All financial queries (market, education, portfolio) go through
 # the chat endpoint which uses multi-agent processing to handle them

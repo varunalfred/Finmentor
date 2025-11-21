@@ -149,25 +149,38 @@ class EmbeddingService:
             else:
                 raise ValueError(f"Unknown provider: {self.provider_name}")
         
-        # Auto-select based on available API keys
-        # Try Gemini first
-        if os.getenv("GEMINI_API_KEY") or os.getenv("EMBEDDING_API_KEY", "").startswith("AIza"):
+        # Check EMBEDDING_API_KEY first (takes priority over GEMINI_API_KEY)
+        embedding_api_key = os.getenv("EMBEDDING_API_KEY", "").strip()
+        
+        # If EMBEDDING_API_KEY is empty or not set, use local embeddings
+        if not embedding_api_key:
+            logger.info("EMBEDDING_API_KEY not set or empty, using free local embeddings")
+            self.provider_name = "local"
+            return LocalEmbeddings()
+        
+        # If EMBEDDING_API_KEY is set, determine provider by key format
+        # Gemini keys start with "AIza"
+        if embedding_api_key.startswith("AIza"):
             try:
                 self.provider_name = "gemini"
-                return GeminiEmbeddings()
+                return GeminiEmbeddings(api_key=embedding_api_key)
             except Exception as e:
-                logger.warning(f"Failed to initialize Gemini: {e}")
+                logger.warning(f"Failed to initialize Gemini: {e}, falling back to local")
+                self.provider_name = "local"
+                return LocalEmbeddings()
         
-        # Try OpenAI
-        if os.getenv("OPENAI_API_KEY") or os.getenv("EMBEDDING_API_KEY", "").startswith("sk-"):
+        # OpenAI keys start with "sk-"
+        if embedding_api_key.startswith("sk-"):
             try:
                 self.provider_name = "openai"
-                return OpenAIEmbeddings()
+                return OpenAIEmbeddings(api_key=embedding_api_key)
             except Exception as e:
-                logger.warning(f"Failed to initialize OpenAI: {e}")
+                logger.warning(f"Failed to initialize OpenAI: {e}, falling back to local")
+                self.provider_name = "local"
+                return LocalEmbeddings()
         
-        # Fallback to local (always works)
-        logger.info("No API keys found, using free local embeddings")
+        # Unknown key format, fallback to local
+        logger.warning(f"Unknown EMBEDDING_API_KEY format, using local embeddings")
         self.provider_name = "local"
         return LocalEmbeddings()
     

@@ -2,7 +2,7 @@
 Unified Chat Router - Supports Text, Voice, and Multimodal inputs
 """
 
-from fastapi import APIRouter, HTTPException, Depends, File, UploadFile, Form
+from fastapi import APIRouter, HTTPException, Depends, File, UploadFile, Form, BackgroundTasks
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List, Optional, Union
 from datetime import datetime
@@ -71,12 +71,41 @@ class ChatResponse(BaseModel):
 hybrid_system = None
 data_manager = None
 
+# ============= Background Task Functions =============
+
+def store_embeddings_background(user_msg_id: str, assistant_msg_id: str, user_content: str, assistant_content: str):
+    """
+    Background task to store message embeddings using sentence-transformers (all-MiniLM-L6-v2)
+    Runs after response is sent to user, doesn't block the response
+    """
+    import asyncio
+    from services.agentic_rag import rag_service
+    
+    async def store():
+        try:
+            # Store user message embedding
+            await rag_service.store_message_embedding(user_msg_id, user_content)
+            logger.info(f"✅ Stored embedding for user message {user_msg_id[:8]}")
+            
+            # Store assistant message embedding
+            await rag_service.store_message_embedding(assistant_msg_id, assistant_content)
+            logger.info(f"✅ Stored embedding for assistant message {assistant_msg_id[:8]}")
+            
+        except Exception as e:
+            logger.error(f"❌ Background embedding storage failed: {e}")
+    
+    # Run the async function in the background thread using asyncio.run
+    try:
+        asyncio.run(store())
+    except Exception as e:
+        logger.error(f"❌ Failed to run background embedding task: {e}")
+
 def get_hybrid_system(db: AsyncSession = None) -> HybridFinMentorSystem:
     """Get or create hybrid system instance (singleton pattern)"""
     global hybrid_system
     if hybrid_system is None:
         config = {
-            "model": os.getenv("DEFAULT_MODEL", "gemini-pro"),  # Configurable via env
+            "model": os.getenv("DEFAULT_MODEL", "gemini-2.0-flash-exp"),  # Configurable via env
             "temperature": float(os.getenv("DEFAULT_TEMPERATURE", "0.7")),
             "max_tokens": int(os.getenv("DEFAULT_MAX_TOKENS", "1000")),
             "verbose": os.getenv("VERBOSE_LOGGING", "false").lower() == "true"
@@ -172,6 +201,7 @@ async def process_document_input(document_data: str) -> Dict[str, Any]:
 @router.post("/", response_model=ChatResponse)
 async def chat(
     request: ChatRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db)  # Database session injection
 ):
     """
@@ -256,11 +286,35 @@ async def chat(
         from models.database import Conversation, Message  # Import database models
         import uuid  # For generating unique IDs
         from datetime import datetime, timezone  # For timestamps
+        from sqlalchemy import select  # For querying database
 
         # Get existing conversation ID or create new one
         conversation_id = extracted_context.get('conversation_id', str(uuid.uuid4()))  # Continue or start new convo
 
-        # Create user message record
+        # Check if conversation exists, create if not
+        result_query = await db.execute(
+            select(Conversation).where(Conversation.id == conversation_id)
+        )
+        existing_conversation = result_query.scalar_one_or_none()
+        
+        if not existing_conversation:
+            # Create new conversation record
+            # Extract topic from RAG intent (e.g., "MARKET_ANALYSIS" -> "market_analysis")
+            intent = rag_context.get('intent', 'general').lower()
+            topic = intent if intent in ['stocks', 'education', 'planning', 'portfolio', 'market_analysis', 'risk'] else 'general'
+            
+            conversation = Conversation(
+                id=conversation_id,
+                user_id=user_id,
+                title=processed_message[:100],  # Use first 100 chars as title
+                topic=topic,  # Set topic based on intent
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc)
+            )
+            db.add(conversation)
+            await db.flush()  # Ensure conversation is created before messages
+
+        # Create user message record with all multimodal data
         user_message = Message(
             id=str(uuid.uuid4()),  # Generate unique message ID
             conversation_id=conversation_id,  # Link to conversation thread
@@ -268,28 +322,97 @@ async def chat(
             role="user",  # Mark as user message (not assistant)
             content=processed_message,  # The actual message text
             input_type=request.input_type,  # Was it text/voice/image/document?
+            voice_data=request.voice_data if request.input_type == "voice" else None,  # Store voice data
+            image_data=request.image_data if request.input_type == "image" else None,  # Store image data
+            document_data=request.document_data if request.input_type == "document" else None,  # Store document data
             created_at=datetime.now(timezone.utc)  # When message was sent
         )
         db.add(user_message)  # Add to database session (not saved yet)
 
-        # Create assistant response record
+        # Estimate token usage if not provided (rough: 1 token ≈ 4 chars for English)
+        tokens_estimate = None
+        if result.get("metadata", {}).get("tokens_used"):
+            tokens_estimate = result["metadata"]["tokens_used"]
+        else:
+            # Estimate: input tokens + output tokens
+            input_tokens = len(processed_message) // 4
+            output_tokens = len(result.get("response", "")) // 4
+            tokens_estimate = input_tokens + output_tokens
+        
+        # Create assistant response record with all metadata and structured data
         assistant_message = Message(
             id=str(uuid.uuid4()),  # Generate unique ID for response
             conversation_id=conversation_id,  # Same conversation thread
             user_id=user_id,  # Response is for this user
             role="assistant",  # Mark as AI response
             content=result.get("response", ""),  # The AI's response text
-            confidence_score=result.get("confidence", 0.0),  # How confident AI is
-            model_used="gemini-pro",  # Which LLM generated this
+            confidence_score=result.get("metadata", {}).get("confidence", 0.0),  # How confident AI is
+            model_used="gemini-2.5-flash-002",  # Which LLM generated this
+            processing_time=result.get("metadata", {}).get("processing_time"),  # How long processing took
+            tokens_used=tokens_estimate,  # Token usage (estimated if not provided)
+            response_data=result.get("data", {}),  # Structured data (prices, calculations, etc.)
             created_at=datetime.now(timezone.utc)  # Response timestamp
         )
         db.add(assistant_message)  # Add to session
 
+        # Calculate basic sentiment from confidence and success
+        sentiment_score = result.get("metadata", {}).get("confidence", 0.5)
+        if not result.get("success", True):
+            sentiment_score = max(0.0, sentiment_score - 0.3)  # Lower sentiment on errors
+        
+        # Build conversation context from RAG and metadata
+        conversation_context = {
+            "last_intent": rag_context.get("intent", "general"),
+            "last_confidence": sentiment_score,
+            "cumulative_sentiment": sentiment_score,  # Will be averaged over time
+            "user_preferences": request.user_profile,
+            "last_updated": datetime.now(timezone.utc).isoformat()
+        }
+        
+        # Update conversation metadata
+        if existing_conversation:
+            # Update existing conversation
+            existing_conversation.total_messages = (existing_conversation.total_messages or 0) + 2  # +2 for user + assistant
+            existing_conversation.last_message_at = datetime.now(timezone.utc)
+            existing_conversation.updated_at = datetime.now(timezone.utc)
+            
+            # Update cumulative sentiment (running average)
+            old_context = existing_conversation.context or {}
+            old_sentiment = old_context.get("cumulative_sentiment", 0.5)
+            msg_count = existing_conversation.total_messages
+            new_sentiment = ((old_sentiment * (msg_count - 2)) + sentiment_score * 2) / msg_count
+            conversation_context["cumulative_sentiment"] = new_sentiment
+            existing_conversation.sentiment = new_sentiment
+            
+            # Merge new context with old context
+            existing_conversation.context = {**old_context, **conversation_context}
+        else:
+            # New conversation - set initial values
+            conversation.total_messages = 2  # First exchange
+            conversation.last_message_at = datetime.now(timezone.utc)
+            conversation.sentiment = sentiment_score
+            conversation.context = conversation_context
+        
+        # Commit messages and conversation updates
         await db.commit()  # Save both messages to database
+        
+        # Check if we should prompt for satisfaction rating (every 50 conversations)
+        from sqlalchemy import select, func
+        user_conv_count = await db.execute(
+            select(func.count(Conversation.id)).where(Conversation.user_id == user_id)
+        )
+        total_convs = user_conv_count.scalar()
+        prompt_satisfaction = (total_convs % 50 == 0) if total_convs else False
 
-        # Store embeddings asynchronously for future RAG retrieval
-        await rag_service.store_message_embedding(user_message.id, processed_message)  # Embed user's query
-        await rag_service.store_message_embedding(assistant_message.id, result.get("response", ""))  # Embed AI response
+        # Schedule background task to store embeddings using sentence-transformers (all-MiniLM-L6-v2)
+        # This runs after the response is sent, doesn't block user
+        background_tasks.add_task(
+            store_embeddings_background,
+            user_message.id,
+            assistant_message.id,
+            processed_message,
+            result.get("response", "")
+        )
 
         # Generate voice response if user prefers audio output
         voice_response = None  # Default to no voice
@@ -303,7 +426,10 @@ async def chat(
             data={**result.get("data", {}), **extracted_context},  # Merge all data (prices, analysis, etc.)
             metadata={  # Additional info about processing
                 **result.get("metadata", {}),  # Metadata from agents
-                "input_type": request.input_type  # Record how user inputted query
+                "input_type": request.input_type,  # Record how user inputted query
+                "conversation_id": conversation_id,  # Return conversation_id so frontend can continue thread
+                "prompt_satisfaction_rating": prompt_satisfaction,  # Ask for rating every 50 convs
+                "sentiment_score": sentiment_score  # Current message sentiment
             },
             error=result.get("error")  # Any error message
         )
@@ -508,3 +634,202 @@ async def get_education(topic: str, level: str = "beginner"):
 
     except Exception as e:
         return {"success": False, "error": str(e)}  # Return error
+
+
+# ============= Conversation History Endpoints =============
+
+@router.get("/conversations")
+async def get_conversations(
+    db: AsyncSession = Depends(get_db),
+    limit: int = 50,
+    offset: int = 0
+):
+    """
+    Get list of user's conversations with titles and metadata
+    Returns conversations ordered by most recent first
+    """
+    try:
+        from models.database import Conversation
+        from sqlalchemy import select, desc
+        
+        # Query conversations ordered by most recent
+        query = select(Conversation).order_by(desc(Conversation.updated_at)).limit(limit).offset(offset)
+        
+        result = await db.execute(query)
+        conversations = result.scalars().all()
+        
+        # Format response
+        conversation_list = []
+        for conv in conversations:
+            conversation_list.append({
+                "id": conv.id,
+                "user_id": conv.user_id,
+                "title": conv.title,
+                "topic": conv.topic,
+                "total_messages": conv.total_messages,
+                "created_at": conv.created_at.isoformat() if conv.created_at else None,
+                "updated_at": conv.updated_at.isoformat() if conv.updated_at else None,
+                "last_message_at": conv.last_message_at.isoformat() if conv.last_message_at else None
+            })
+        
+        return {
+            "success": True,
+            "conversations": conversation_list,
+            "total": len(conversation_list),
+            "limit": limit,
+            "offset": offset
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching conversations: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/conversations/{conversation_id}/messages")
+async def get_conversation_messages(
+    conversation_id: str,
+    db: AsyncSession = Depends(get_db),
+    limit: int = 100
+):
+    """
+    Get all messages from a specific conversation
+    Returns messages ordered chronologically (oldest first)
+    """
+    try:
+        from models.database import Message, Conversation
+        from sqlalchemy import select
+        
+        # Verify conversation exists
+        conv_query = select(Conversation).where(Conversation.id == conversation_id)
+        conv_result = await db.execute(conv_query)
+        conversation = conv_result.scalar_one_or_none()
+        
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        # Get messages for this conversation
+        messages_query = select(Message).where(
+            Message.conversation_id == conversation_id
+        ).order_by(Message.created_at).limit(limit)
+        
+        result = await db.execute(messages_query)
+        messages = result.scalars().all()
+        
+        # Format messages
+        message_list = []
+        for msg in messages:
+            message_list.append({
+                "id": msg.id,
+                "conversation_id": msg.conversation_id,
+                "role": msg.role,
+                "content": msg.content,
+                "input_type": msg.input_type,
+                "confidence_score": msg.confidence_score,
+                "model_used": msg.model_used,
+                "created_at": msg.created_at.isoformat() if msg.created_at else None
+            })
+        
+        return {
+            "success": True,
+            "conversation": {
+                "id": conversation.id,
+                "title": conversation.title,
+                "created_at": conversation.created_at.isoformat() if conversation.created_at else None
+            },
+            "messages": message_list,
+            "total": len(message_list)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error loading conversation messages: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/conversations/{conversation_id}/rating")
+async def submit_satisfaction_rating(
+    conversation_id: str,
+    rating: int,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Submit satisfaction rating for a conversation (1-5 stars)
+    Called when user is prompted (every 50 conversations)
+    """
+    try:
+        from models.database import Conversation
+        from sqlalchemy import select
+        
+        # Validate rating
+        if not 1 <= rating <= 5:
+            raise HTTPException(status_code=400, detail="Rating must be between 1 and 5")
+        
+        # Get conversation
+        result = await db.execute(
+            select(Conversation).where(Conversation.id == conversation_id)
+        )
+        conversation = result.scalar_one_or_none()
+        
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        # Update satisfaction rating
+        conversation.satisfaction_rating = rating
+        await db.commit()
+        
+        logger.info(f"Satisfaction rating {rating} submitted for conversation {conversation_id}")
+        
+        return {
+            "success": True,
+            "message": "Thank you for your feedback!",
+            "rating": rating
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error submitting rating: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/conversations/{conversation_id}")
+async def delete_conversation(
+    conversation_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Delete a conversation and all its messages
+    """
+    try:
+        from models.database import Conversation, Message
+        from sqlalchemy import select, delete
+        
+        # Verify conversation exists
+        conv_query = select(Conversation).where(Conversation.id == conversation_id)
+        conv_result = await db.execute(conv_query)
+        conversation = conv_result.scalar_one_or_none()
+        
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        # Delete all messages first (foreign key constraint)
+        await db.execute(delete(Message).where(Message.conversation_id == conversation_id))
+        
+        # Delete conversation
+        await db.execute(delete(Conversation).where(Conversation.id == conversation_id))
+        
+        await db.commit()
+        
+        return {
+            "success": True,
+            "message": "Conversation deleted successfully",
+            "conversation_id": conversation_id
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting conversation: {e}")
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))

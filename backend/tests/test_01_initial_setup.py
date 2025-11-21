@@ -297,10 +297,10 @@ def test_dspy_setup():
         print_success("DSPy imported successfully")
         
         # Check if we can configure DSPy with available LLM (using new dspy.LM API)
-        if os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"):
+        if os.getenv("GEMINI_API_KEY"):
             try:
                 # Set environment variable for LiteLLM
-                api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+                api_key = os.getenv("GEMINI_API_KEY")
                 os.environ["GEMINI_API_KEY"] = api_key
                 
                 lm = dspy.LM(model="gemini/gemini-1.5-flash")

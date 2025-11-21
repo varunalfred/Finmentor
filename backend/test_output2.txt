@@ -1,0 +1,120 @@
+﻿python : 2025/11/12 12:07:45 WARNING dspy.primitives.module: Calling module.forward(...) on DSPyFinancialReasoner directly is discouraged. Please use module(...) instead.
+At line:1 char:1
++ python tests/test_simple.py 2>&1 | Out-File -Encoding utf8 test_outpu ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (2025/11/12 12:0...e(...) instead.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+2025/11/12 12:07:52 WARNING dspy.clients.lm: LM response was truncated due to exceeding max_tokens=1000. You can inspect the latest LM interactions with `dspy.inspect_history()`. 
+To avoid truncation, consider passing a larger max_tokens when setting up dspy.LM. You may also consider increasing the temperature (currently 0.7)  if the reason for truncation is 
+repetition.
+Error in StdOutCallbackHandler.on_tool_end callback: UnicodeEncodeError('charmap', "\x1b[33;1m\x1b[1;3m\r\n\U0001f4da P/E ratio\r\n\r\nThe P/E ratio, or Price-to-Earnings ratio, is 
+a popular tool used by investors to figure out if a company's stock price is fair, expensive, or cheap.Think of it like this: if you're buying a piece of a business (a stock), you 
+want to know how much you're paying for each dollar of profit that business makes. The P/E ratio tells you exactly that.It's calculated by taking the current share Price of a 
+company's stock and dividing it by its Earnings Per Share (EPS). EPS is simply the company's total profit divided by the number of shares outstanding.A higher P/E ratio generally 
+means investors are willing to pay more for each dollar of earnings, often because they expect the company to grow faster in the future. A lower P/E ratio might suggest a company 
+is undervalued or that investors expect slower growth.\r\n\r\n\U0001f4ad Examples:\r\nLet's say Company A's stock price is $100 per share, and it earned $5 per share last year (EPS 
+= $5).Its P/E ratio would be: $100 (Price) / $5 (EPS) = 20.This means investors are paying $20 for every $1 of earnings Company A generates.Now, imagine Company B's stock price is 
+$50 per share, and it earned $5 per share last year (EPS = $5).Its P/E ratio would be: $50 (Price) / $5 (EPS) = 10.Comparing them, Company A has a P/E of 20, and Company B has a 
+P/E of 10. If everything else were equal, investors are paying twice as much for Company A's earnings, possibly expecting higher growth from Company A.\r\n\r\n\U0001f517 Related 
+Concepts: Earnings Per Share (EPS), Stock Valuation, Dividend Yield, Market Capitalization, Financial Statements (especially the Income Statement)\r\n\x1b[0m", 15, 16, 'character 
+maps to <undefined>')
+\u274c Agent executor failed: One input key expected got ['context', 'intent', 'current_time', 'input', 'user_profile']
+Error type: ValueError
+Error processing query: One input key expected got ['context', 'intent', 'current_time', 'input', 'user_profile']
+
+Starting simple test suite...
+This test runs queries ONE AT A TIME to avoid rate limits.
+
+======================================================================
+SIMPLE TEST SUITE - One Query at a Time
+======================================================================
+
+Using Model: gemini-2.5-flash
+Rate Limit Strategy: Sequential execution with delays
+======================================================================
+
+============================================================
+SIMPLE TEST: Basic Educational Query
+============================================================
+
+======================================================================
+DEBUG: Creating agent with 11 tools
+DEBUG: LLM: ChatGoogleGenerativeAI
+DEBUG: Model: gemini-2.5-flash
+DEBUG: Tool names being passed to LangChain:
+  1. 'analyze_financial_query'
+  2. 'explain_concept'
+  3. 'assess_risk'
+  4. 'get_stock_data'
+  5. 'get_historical_prices'
+  6. 'calculate_technical_indicators'
+  7. 'calculate_portfolio_metrics'
+  8. 'calculate_position_size'
+  9. 'calculate_compound_interest'
+  10. 'calculate_loan_payment'
+  11. 'compare_stocks'
+======================================================================
+
+DEBUG: Attempting to bind tools to LLM using bind_tools()...
+DEBUG: Tools bound successfully to LLM
+DEBUG: Trying ReAct agent (more compatible with Gemini)...
+DEBUG: ReAct agent created successfully
+
+
+Query: What is a P/E ratio?
+Processing...
+
+
+[1m> Entering new AgentExecutor chain...[0m
+[32;1m[1;3mAction: explain_concept
+Action Input: P/E ratio[0m[32;1m[1;3mI now know the final answer
+Final Answer: The P/E ratio, or Price-to-Earnings ratio, is a valuation metric used by investors to assess if a company's stock price is fair, expensive, or cheap relative to its earnings. It's calculated by dividing the current share Price of a company's stock by its Earnings Per Share (EPS).
+
+For example, if a company's stock price is $100 and its EPS is $5, its P/E ratio would be 20 ($100 / $5). This means investors are paying $20 for every $1 of earnings the company generates.
+
+A higher P/E ratio often indicates that investors expect higher future growth from the company, while a lower P/E ratio might suggest the company is undervalued or expected to have slower growth. It's a key tool for stock valuation and is often compared across companies in the same industry.[0m
+Traceback (most recent call last):
+  File "D:\Christ University\MSc\5MDS\ProjectFinance\PortifolioBuilder\backend\tests\test_simple.py", line 53, in test_basic_query
+    print(f"\n\u2705 SUCCESS!")
+    ~~~~~^^^^^^^^^^^^^^^^^^
+  File "C:\Python313\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2705' in position 2: character maps to <undefined>
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "D:\Christ University\MSc\5MDS\ProjectFinance\PortifolioBuilder\backend\tests\test_simple.py", line 124, in main
+    await test_basic_query()
+  File "D:\Christ University\MSc\5MDS\ProjectFinance\PortifolioBuilder\backend\tests\test_simple.py", line 60, in test_basic_query
+    print(f"\n\u274c ERROR: {e}")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python313\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u274c' in position 2: character maps to <undefined>
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "D:\Christ University\MSc\5MDS\ProjectFinance\PortifolioBuilder\backend\tests\test_simple.py", line 148, in <module>
+    asyncio.run(main())
+    ~~~~~~~~~~~^^^^^^^^
+  File "C:\Python313\Lib\asyncio\runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "C:\Python313\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "C:\Python313\Lib\asyncio\base_events.py", line 719, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "D:\Christ University\MSc\5MDS\ProjectFinance\PortifolioBuilder\backend\tests\test_simple.py", line 141, in main
+    print(f"\n\u274c Test suite failed: {e}")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python313\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u274c' in position 2: character maps to <undefined>

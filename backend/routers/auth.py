@@ -75,6 +75,14 @@ async def register(
                 detail="Email already registered"  # Error message
             )
 
+        # Check if username exists
+        existing_username = await auth_service.get_user_by_username(user_data.username)
+        if existing_username:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username already taken"
+            )
+
         # Create new user
         user = await auth_service.create_user(
             email=user_data.email,  # User's email
@@ -85,6 +93,13 @@ async def register(
             education_level=user_data.education_level,  # Knowledge level
             risk_tolerance=user_data.risk_tolerance  # Risk preference
         )
+
+        # Check if user creation failed
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to create user. Please try again."
+            )
 
         return UserResponse(
             id=user.id,
@@ -115,7 +130,7 @@ async def login(
     try:
         # Authenticate user
         user = await auth_service.authenticate_user(
-            username=form_data.username,  # Provided username
+            username_or_email=form_data.username,  # Provided username or email
             password=form_data.password  # Provided password (will be verified)
         )
 
@@ -160,8 +175,8 @@ async def get_current_user(
 ):
     """Get current user information"""
     try:
-        # Decode token
-        payload = auth_service.decode_token(token)  # Decode JWT token
+        # Verify and decode token
+        payload = auth_service.verify_token(token)  # Verify JWT token
         if not payload:  # Invalid or expired token?
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,  # 401 error

@@ -214,7 +214,12 @@ class AgenticRAG:
     ) -> List[Dict[str, Any]]:
         """Retrieve from conversation history using PGVector"""
         try:
+            # Convert embedding list to proper vector string format for PGVector
+            # Format: '[0.1,0.2,0.3]' (no spaces, wrapped in brackets)
+            embedding_str = '[' + ','.join(map(str, query_embedding)) + ']'
+            
             # Build base query with vector similarity
+            # CAST the string to vector type explicitly
             query_text = """
                 SELECT
                     m.id,
@@ -223,14 +228,14 @@ class AgenticRAG:
                     m.confidence_score,
                     m.created_at,
                     c.topic,
-                    m.embedding <-> :embedding as distance
+                    m.embedding <-> CAST(:embedding AS vector) as distance
                 FROM messages m
                 JOIN conversations c ON m.conversation_id = c.id
                 WHERE 1=1
             """
 
             # Add filters
-            params = {"embedding": query_embedding}
+            params = {"embedding": embedding_str}
 
             if "user_id" in filters:
                 query_text += " AND m.user_id = :user_id"
@@ -281,6 +286,10 @@ class AgenticRAG:
     ) -> List[Dict[str, Any]]:
         """Retrieve from educational content using PGVector"""
         try:
+            # Convert embedding list to proper vector string format for PGVector
+            # Format: '[0.1,0.2,0.3]' (no spaces, wrapped in brackets)
+            embedding_str = '[' + ','.join(map(str, query_embedding)) + ']'
+            
             query_text = """
                 SELECT
                     id,
@@ -289,12 +298,12 @@ class AgenticRAG:
                     level,
                     content,
                     summary,
-                    embedding <-> :embedding as distance
+                    embedding <-> CAST(:embedding AS vector) as distance
                 FROM educational_content
                 WHERE embedding IS NOT NULL
             """
 
-            params = {"embedding": query_embedding}
+            params = {"embedding": embedding_str}
 
             if "level" in filters:
                 query_text += " AND level = :level"
@@ -464,14 +473,14 @@ class AgenticRAG:
                 # For now, we'll prepare the reflection structure
                 reflection = {
                     "needed": True,
-                    "intent": intent.value,
+                    "intent": intent.name,  # Use enum name for consistency
                     "checks": ["consistency", "risk_disclosure", "personalization"]
                 }
 
             # Prepare final context
             result = {
                 "query": query,
-                "intent": intent.value,
+                "intent": intent.name,  # Return enum name (e.g., "EDUCATIONAL_QUERY") instead of value
                 "confidence": confidence,
                 "retrieval_plan": plan,
                 "context": retrieved_context,
@@ -510,14 +519,17 @@ class AgenticRAG:
             else:
                 embedding = self.embedding_service.encode(content).tolist()
 
+            # Convert embedding list to string format for pgvector
+            embedding_str = str(embedding)
+
             # Update message with embedding
             await self.db.execute(
                 text("""
                     UPDATE messages
-                    SET embedding = :embedding
+                    SET embedding = :embedding::vector
                     WHERE id = :message_id
                 """),
-                {"embedding": embedding, "message_id": message_id}
+                {"embedding": embedding_str, "message_id": message_id}
             )
             await self.db.commit()
 
@@ -542,13 +554,17 @@ class AgenticRAG:
             else:
                 query_embedding = self.embedding_service.encode(query).tolist()
 
-            # Search using PGVector
+            # Convert embedding list to proper vector string format for PGVector
+            # Format: '[0.1,0.2,0.3]' (no spaces, wrapped in brackets)
+            embedding_str = '[' + ','.join(map(str, query_embedding)) + ']'
+
+            # Search using PGVector with explicit CAST
             result = await self.db.execute(
                 text("""
                     SELECT
                         content,
                         created_at,
-                        embedding <-> :embedding as distance
+                        embedding <-> CAST(:embedding AS vector) as distance
                     FROM messages
                     WHERE user_id = :user_id
                         AND embedding IS NOT NULL
@@ -557,7 +573,7 @@ class AgenticRAG:
                     LIMIT :k
                 """),
                 {
-                    "embedding": query_embedding,
+                    "embedding": embedding_str,
                     "user_id": user_id,
                     "k": k
                 }
