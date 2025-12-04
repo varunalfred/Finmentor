@@ -9,9 +9,10 @@ export const ThemeProvider = ({ children }) => {
     return savedTheme || 'light';
   });
 
-  // Update body class and localStorage whenever theme changes
+  // Update body class, data-theme attribute, and localStorage whenever theme changes
   useEffect(() => {
     document.body.className = theme;
+    document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('theme', theme);
   }, [theme]);
 

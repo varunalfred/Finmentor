@@ -14,6 +14,7 @@ import json
 import os
 
 from models.database import Message, Conversation, EducationalContent, User
+from models.document import DocumentChunk, UserDocument
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +118,7 @@ class AgenticRAG:
             # This separates embeddings from LLM API keys
             from sentence_transformers import SentenceTransformer
             logger.info("Using LOCAL SentenceTransformer embeddings (unlimited, no API key needed)")
-            return SentenceTransformer('all-MiniLM-L6-v2')
+            return SentenceTransformer('all-MiniLM-L6-v2', local_files_only=True)
 
     # ============= Intent Classification =============
 
@@ -173,33 +174,40 @@ class AgenticRAG:
             plan["filters"]["time_range"] = 30  # Last 30 days
 
         elif intent == QueryIntent.EDUCATIONAL_QUERY:
-            plan["sources"] = ["education", "conversations"]
+            plan["sources"] = ["education", "documents", "conversations"]  # Add documents
             plan["strategy"] = RetrievalStrategy.SIMILARITY
             plan["filters"]["level"] = user_context.get("education_level", "beginner")
+            plan["filters"]["user_id"] = user_context.get("user_id")  # For document search
+            plan["filters"]["include_public"] = True  # Include public documents
 
         elif intent == QueryIntent.MARKET_ANALYSIS:
-            plan["sources"] = ["market", "conversations"]
+            plan["sources"] = ["market", "documents", "conversations"]  # Add documents
             plan["strategy"] = RetrievalStrategy.MULTI_SOURCE
             plan["filters"]["recency"] = 24  # Last 24 hours for market data
+            plan["filters"]["user_id"] = user_context.get("user_id")
+            plan["filters"]["include_public"] = True
 
         elif intent == QueryIntent.PORTFOLIO_ADVICE:
-            plan["sources"] = ["conversations", "education", "market"]
+            plan["sources"] = ["conversations", "education", "documents", "market"]  # Add documents
             plan["strategy"] = RetrievalStrategy.MULTI_SOURCE
             plan["filters"]["user_id"] = user_context.get("user_id")
+            plan["filters"]["include_public"] = True
             plan["needs_verification"] = True
             plan["k"] = 10  # Get more context for critical decisions
 
         elif intent == QueryIntent.RISK_ASSESSMENT:
-            plan["sources"] = ["conversations", "education"]
+            plan["sources"] = ["conversations", "education", "documents"]  # Add documents
             plan["strategy"] = RetrievalStrategy.MULTI_SOURCE
             plan["filters"]["user_id"] = user_context.get("user_id")
             plan["filters"]["risk_profile"] = user_context.get("risk_tolerance")
+            plan["filters"]["include_public"] = True
             plan["needs_verification"] = True
 
         else:  # GENERAL_CHAT
-            plan["sources"] = ["conversations"]
+            plan["sources"] = ["conversations", "documents"]  # Add documents for general queries too
             plan["strategy"] = RetrievalStrategy.SIMILARITY
             plan["filters"]["user_id"] = user_context.get("user_id")
+            plan["filters"]["include_public"] = True
             plan["k"] = 3
 
         return plan
@@ -231,7 +239,7 @@ class AgenticRAG:
                     m.embedding <-> CAST(:embedding AS vector) as distance
                 FROM messages m
                 JOIN conversations c ON m.conversation_id = c.id
-                WHERE 1=1
+                WHERE m.embedding IS NOT NULL
             """
 
             # Add filters
@@ -261,6 +269,9 @@ class AgenticRAG:
             # Format results
             results = []
             for row in rows:
+                # Skip if distance is None (shouldn't happen with WHERE clause but check anyway)
+                if row.distance is None:
+                    continue
                 results.append({
                     "id": row.id,
                     "content": row.content,
@@ -338,6 +349,126 @@ class AgenticRAG:
             logger.error(f"Error retrieving from education: {e}")
             return []
 
+    async def retrieve_from_documents(
+        self,
+        query_embedding: List[float],
+        user_id: str,
+        filters: Dict[str, Any],
+        include_public: bool = True,
+        k: int = 5
+    ) -> List[Dict[str, Any]]:
+        """
+        Retrieve from user documents + public community documents using PGVector
+        
+        Args:
+            query_embedding: Query vector
+            user_id: Current user ID
+            filters: Additional filters
+            include_public: Whether to include public documents
+            k: Number of results to return
+            
+        Returns:
+            List of relevant document chunks with attribution
+        """
+        try:
+            # Convert embedding to PGVector format
+            embedding_str = '[' + ','.join(map(str, query_embedding)) + ']'
+            
+            # Build query for private + public documents
+            if include_public:
+                # Search user's private docs OR public docs
+                query_text = """
+                    SELECT
+                        dc.id,
+                        dc.chunk_text,
+                        dc.page_number,
+                        dc.chunk_index,
+                        dc.is_public,
+                        ud.filename,
+                        ud.user_id as uploader_id,
+                        dc.conversation_id,
+                        (dc.chunk_embedding <=> $1::vector) as distance
+                    FROM document_chunks dc
+                    JOIN user_documents ud ON dc.document_id = ud.id
+                    WHERE (dc.user_id = $2 OR dc.is_public = TRUE)
+                    AND dc.chunk_embedding IS NOT NULL
+                    ORDER BY dc.chunk_embedding <=> $1::vector
+                    LIMIT $3
+                """
+            else:
+                # Only user's private docs
+                query_text = """
+                    SELECT
+                        dc.id,
+                        dc.chunk_text,
+                        dc.page_number,
+                        dc.chunk_index,
+                        dc.is_public,
+                        ud.filename,
+                        ud.user_id as uploader_id,
+                        dc.conversation_id,
+                        (dc.chunk_embedding <=> $1::vector) as distance
+                    FROM document_chunks dc
+                    JOIN user_documents ud ON dc.document_id = ud.id
+                    WHERE dc.user_id = $2
+                    AND dc.chunk_embedding IS NOT NULL
+                    ORDER BY dc.chunk_embedding <=> $1::vector
+                    LIMIT $3
+                """
+            
+            # Execute query with positional parameters
+            result = await self.db.execute(
+                text(query_text),
+                (embedding_str, user_id, k)
+            )
+            rows = result.fetchall()
+            
+            # Format results with attribution
+            results = []
+            for row in rows:
+                # Convert row to dict for easier access
+                row_dict = dict(row._mapping) if hasattr(row, '_mapping') else {
+                    'id': row[0],
+                    'chunk_text': row[1],
+                    'page_number': row[2],
+                    'chunk_index': row[3],
+                    'is_public': row[4],
+                    'filename': row[5],
+                    'uploader_id': row[6],
+                    'conversation_id': row[7],
+                    'distance': row[8]
+                }
+                
+                # Determine attribution
+                if row_dict['is_public'] and row_dict['uploader_id'] != user_id:
+                    attribution = f"from {row_dict['filename']} (shared by user_{row_dict['uploader_id'][:8]})"
+                    source_type = "public_document"
+                else:
+                    attribution = f"from your document: {row_dict['filename']}"
+                    source_type = "private_document"
+                
+                results.append({
+                    "id": row_dict['id'],
+                    "content": row_dict['chunk_text'],
+                    "filename": row_dict['filename'],
+                    "page_number": row_dict['page_number'],
+                    "chunk_index": row_dict['chunk_index'],
+                    "is_public": row_dict['is_public'],
+                    "uploader_id": row_dict['uploader_id'],
+                    "conversation_id": row_dict['conversation_id'],
+                    "distance": float(row_dict['distance']),
+                    "similarity": 1 - float(row_dict['distance']),  # Convert distance to similarity score
+                    "attribution": attribution,
+                    "source": source_type
+                })
+            
+            logger.info(f"Retrieved {len(results)} document chunks for user {user_id}")
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error retrieving from documents: {e}")
+            return []
+
     async def execute_retrieval(
         self,
         query: str,
@@ -369,6 +500,18 @@ class AgenticRAG:
                         query_embedding,
                         plan["filters"],
                         plan["k"]
+                    )
+                    all_results.extend(results)
+
+                elif source == "documents":
+                    # Retrieve from uploaded documents (private + public)
+                    user_id = plan["filters"].get("user_id", "default")
+                    results = await self.retrieve_from_documents(
+                        query_embedding,
+                        user_id,
+                        plan["filters"],
+                        include_public=plan["filters"].get("include_public", True),
+                        k=plan["k"]
                     )
                     all_results.extend(results)
 
@@ -519,14 +662,16 @@ class AgenticRAG:
             else:
                 embedding = self.embedding_service.encode(content).tolist()
 
-            # Convert embedding list to string format for pgvector
-            embedding_str = str(embedding)
+            # Convert embedding list to proper pgvector format
+            # Format: '[0.1,0.2,0.3]' - pgvector accepts this directly
+            embedding_str = '[' + ','.join(map(str, embedding)) + ']'
 
-            # Update message with embedding
+            # Update message with embedding - use text() for raw SQL
+            # pgvector will automatically cast the string to vector type
             await self.db.execute(
                 text("""
                     UPDATE messages
-                    SET embedding = :embedding::vector
+                    SET embedding = :embedding
                     WHERE id = :message_id
                 """),
                 {"embedding": embedding_str, "message_id": message_id}

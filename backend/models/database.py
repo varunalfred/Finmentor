@@ -3,7 +3,7 @@ Database Models for FinMentor AI
 Using SQLAlchemy with PostgreSQL
 """
 
-from sqlalchemy import Column, Integer, String, Text, DateTime, Float, Boolean, JSON, ForeignKey, Index
+from sqlalchemy import Column, Integer, String, Text, DateTime, Float, Boolean, JSON, ForeignKey, Index, BigInteger
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -32,24 +32,25 @@ class User(Base):
     full_name = Column(String(255))
     hashed_password = Column(String(255), nullable=False)
 
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    last_login = Column(DateTime(timezone=True))
+
     # Profile information
     age = Column(Integer)
-    user_type = Column(String(50), default="beginner")  # beginner, intermediate, advanced
-    education_level = Column(String(50), default="basic")
-    risk_tolerance = Column(String(50), default="moderate")  # low, moderate, high
-    financial_goals = Column(JSON, default=list)  # List of goals
+    user_type = Column(String(50), default="beginner")
+    education_level = Column(String(50), default="None")
+    risk_tolerance = Column(String(50), default="moderate")
+    financial_goals = Column(JSON, default=list)
     preferred_language = Column(String(10), default="en")
-    preferred_output = Column(String(20), default="text")  # text, voice, visual
+    preferred_output = Column(String(20), default="text")
+    profile_picture_url = Column(String(255))
 
     # Account status
     is_active = Column(Boolean, default=True)
     is_verified = Column(Boolean, default=False)
     is_premium = Column(Boolean, default=False)
-
-    # Timestamps
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    last_login = Column(DateTime(timezone=True))
 
     # Relationships
     conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
@@ -87,7 +88,12 @@ class Conversation(Base):
     context = Column(JSON, default=dict)  # Conversation context/memory
     sentiment = Column(Float)  # Average sentiment score
     satisfaction_rating = Column(Integer)  # User rating 1-5
-
+    # Public/Private sharing
+    is_public = Column(Boolean, default=False)
+    visibility = Column(String(20), default="private")  # private, unlisted, public
+    shared_at = Column(DateTime(timezone=True))
+    view_count = Column(Integer, default=0)
+    upvote_count = Column(Integer, default=0)
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
@@ -96,7 +102,8 @@ class Conversation(Base):
     # Relationships
     user = relationship("User", back_populates="conversations")
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")
-
+    documents = relationship("UserDocument", back_populates="conversation", cascade="all, delete-orphan")
+    
     # Indexes for performance
     __table_args__ = (
         Index('idx_user_conversations', 'user_id', 'created_at'),
@@ -363,3 +370,38 @@ class QueryAnalytics(Base):
     __table_args__ = (
         Index('idx_query_type', 'query_type', 'created_at'),
     )
+
+# ============= Market Data Models =============
+
+class MarketIndex(Base):
+    """Live market indices (NIFTY, SENSEX, etc.)"""
+    __tablename__ = "market_indices"
+
+    symbol = Column(String(20), primary_key=True)
+    name = Column(String(100))
+    current_price = Column(Float)
+    change = Column(Float)
+    change_percent = Column(Float)
+    
+    # ADD THIS LINE:
+    history = Column(JSON)
+    
+    # Metadata
+    last_updated = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+class StockPrice(Base):
+    """Real-time stock price cache"""
+    __tablename__ = "stock_prices"
+
+    symbol = Column(String(20), primary_key=True)
+    current_price = Column(Float)
+    change = Column(Float)
+    change_percent = Column(Float)
+    volume = Column(BigInteger)
+    market_cap = Column(BigInteger)
+    
+    # Historical data (mini-chart)
+    history = Column(JSON)
+    
+    # Metadata
+    last_updated = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

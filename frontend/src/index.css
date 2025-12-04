@@ -56,7 +56,8 @@ button {
   transition: all 0.3s ease;
 }
 
-input, textarea {
+input,
+textarea {
   font-family: inherit;
 }
 
@@ -145,4 +146,28 @@ a {
   .container {
     padding: 0 10px;
   }
+}
+
+/* Loading Spinner Animation */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Hide Scrollbar Visually but allow scrolling */
+::-webkit-scrollbar {
+  display: none;
+}
+
+/* Hide scrollbar for IE, Edge and Firefox */
+html {
+  -ms-overflow-style: none;
+  /* IE and Edge */
+  scrollbar-width: none;
+  /* Firefox */
 }

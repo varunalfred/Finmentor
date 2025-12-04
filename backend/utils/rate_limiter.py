@@ -88,7 +88,7 @@ class RateLimitedExecutor:
         [task5] → single (batch 3)
     """
     
-    def __init__(self, max_concurrent: int = 2):
+    def __init__(self, max_concurrent: int = 1):
         """
         Args:
             max_concurrent: Maximum parallel requests allowed
@@ -157,7 +157,7 @@ class SmartRateLimitedOrchestrator:
     - Result: Run 2 agents at a time, never exceed 10 RPM overall
     """
     
-    def __init__(self, rpm_limit: int = 10, max_concurrent: int = 2):
+    def __init__(self, rpm_limit: int = 10, max_concurrent: int = 1):
         """
         Args:
             rpm_limit: Requests per minute limit (10 for Gemini free tier)

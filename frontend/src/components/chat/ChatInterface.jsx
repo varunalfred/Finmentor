@@ -6,10 +6,12 @@ import api from '../../services/api';
 import ConversationSidebar from './ConversationSidebar';
 import SatisfactionRatingModal from './SatisfactionRatingModal';
 import MessageMetadata from './MessageMetadata';
+import ConversationSettings from './ConversationSettings';
+import DocumentManager from './DocumentManager';
 import { MessageSkeleton } from '../common/Skeletons';
 import './ChatInterface.css';
 
-const ChatInterface = ({ 
+const ChatInterface = ({
   title = "FinAdvisor AI",
   placeholder = "Ask me anything about finance...",
   quickActions = [],
@@ -27,8 +29,11 @@ const ChatInterface = ({
   const [showRatingModal, setShowRatingModal] = useState(false); // Satisfaction rating modal
   const [isRecording, setIsRecording] = useState(false); // Voice recording state
   const [isUploading, setIsUploading] = useState(false); // File upload state
+  const [pendingAttachment, setPendingAttachment] = useState(null); // File waiting to be sent
+  const [conversationVisibility, setConversationVisibility] = useState('private'); // Track if conversation is public/private
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
+  const sidebarRefreshRef = useRef(null); // Ref to trigger sidebar refresh
 
   // Auto-scroll to latest message
   const scrollToBottom = () => {
@@ -51,87 +56,132 @@ const ChatInterface = ({
     }
   }, [messages.length]);
 
-  const handleSendMessage = async (messageText) => {
-    const text = messageText || inputText.trim();
-    
-    if (!text) return;
+  const handleSendMessage = async (content = inputText, type = 'text', filename = null) => {
+    if (!content.trim() && type === 'text' && !pendingAttachment) return;
 
-    // Add user message
+    // If we have a pending attachment, use that instead
+    let messageContent = content;
+    let messageType = type;
+    let attachmentData = null;
+
+    if (pendingAttachment) {
+      messageType = pendingAttachment.type;
+      attachmentData = pendingAttachment.data;
+      // If user didn't type anything, use a default prompt
+      if (!messageContent.trim()) {
+        messageContent = `Analyze this document: ${pendingAttachment.name}`;
+      }
+    }
+
     const userMessage = {
       id: Date.now(),
       role: 'user',
-      content: text,
-      timestamp: new Date().toISOString()
+      content: messageContent,
+      timestamp: new Date().toISOString(),
+      // Add attachment info to UI if present
+      attachment: pendingAttachment ? { name: pendingAttachment.name, type: pendingAttachment.type } : null
     };
 
     setMessages(prev => [...prev, userMessage]);
     setInputText('');
+    setPendingAttachment(null); // Clear pending attachment
     setIsTyping(true);
     setError(null);
 
     try {
       // Call the backend API using the centralized api service
       // Pass conversationId to continue the same conversation thread
-      const result = await api.sendChatMessage(text, conversationId);
 
-      if (!result.success) {
-        throw new Error(result.error);
+      // Prepare API call arguments
+      const apiArgs = [messageContent, conversationId];
+
+      // If we have attachment data (from pending attachment), add it to the API call
+      // We need to modify how we call the API to support this hybrid mode
+      // For now, we'll use the existing structure but pass the document data if present
+      let result;
+      if (attachmentData) {
+        // If we have a document ID (from background upload), use it!
+        if (pendingAttachment.documentId) {
+          result = await api.sendChatMessage(
+            messageContent,
+            conversationId,
+            null, // userProfile
+            'text', // inputType is text because we are sending a message about the doc
+            pendingAttachment.documentId // Pass the pre-uploaded document ID
+          );
+        } else {
+          // Fallback for legacy/direct data (shouldn't happen with new flow but good for safety)
+          result = await api.sendChatMessage(
+            messageContent,
+            conversationId,
+            {
+              input_type: 'document',
+              document_data: attachmentData
+            }
+          );
+        }
+      } else {
+        // Standard text message
+        result = await api.sendChatMessage(messageContent, conversationId);
       }
-
-      const data = result.data;
-
-      // Store conversation_id from response to continue thread
-      if (data.metadata?.conversation_id) {
-        setConversationId(data.metadata.conversation_id);
-      }
-
-      // Add AI response
-      const aiMessage = {
-        id: Date.now() + 1,
-        role: 'assistant',
-        content: data.response || 'Sorry, I could not process your request.',
-        timestamp: new Date().toISOString(),
-        metadata: data.metadata || {}
-      };
-
-      setMessages(prev => [...prev, aiMessage]);
-
-      // Check if we should prompt for satisfaction rating (every 50 conversations)
-      if (data.metadata?.prompt_satisfaction_rating && conversationId) {
-        // Show rating modal after a short delay (2 seconds)
-        setTimeout(() => {
-          setShowRatingModal(true);
-          toast('🎉 You\'ve reached a milestone! Please rate your experience.', {
-            duration: 4000,
-          });
-        }, 2000);
-      }
-
-      if (onSendMessage) {
-        onSendMessage(text, data);
-      }
+      handleApiResponse(result);
     } catch (err) {
       console.error('Chat error:', err);
       toast.error('Failed to get response. Please try again.');
-      
-      // Add error message
-      const errorMessage = {
-        id: Date.now() + 1,
-        role: 'assistant',
-        content: 'Sorry, I encountered an error. Please try again.',
-        timestamp: new Date().toISOString(),
-        isError: true
-      };
-      setMessages(prev => [...prev, errorMessage]);
-    } finally {
+      setError('Failed to get response. Please try again.');
       setIsTyping(false);
+    }
+  };
+
+  const handleApiResponse = (result) => {
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+
+    const data = result.data;
+
+    // Store conversation_id from response to continue thread
+    if (data.metadata?.conversation_id) {
+      const isNewConversation = !conversationId; // Check if this is a new conversation
+      setConversationId(data.metadata.conversation_id);
+
+      // Refresh sidebar to show the new conversation
+      if (isNewConversation && sidebarRefreshRef.current) {
+        sidebarRefreshRef.current();
+      }
+    }
+
+    // Add AI response
+    const aiMessage = {
+      id: Date.now() + 1,
+      role: 'assistant',
+      content: data.response || 'Sorry, I could not process your request.',
+      timestamp: new Date().toISOString(),
+      metadata: data.metadata || {}
+    };
+
+    setMessages(prev => [...prev, aiMessage]);
+    setIsTyping(false);
+
+    // Check if we should prompt for satisfaction rating (every 50 conversations)
+    if (data.metadata?.prompt_satisfaction_rating && conversationId) {
+      setTimeout(() => {
+        setShowRatingModal(true);
+        toast('🎉 You\'ve reached a milestone! Please rate your experience.', {
+          duration: 4000,
+        });
+      }, 2000);
+    }
+
+    if (onSendMessage) {
+      onSendMessage(inputText, data);
     }
   };
 
   const handleKeyPress = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      handleSendMessage();
+      handleSendMessage(inputText);
     }
   };
 
@@ -150,7 +200,7 @@ const ChatInterface = ({
     try {
       // Load conversation messages
       const result = await api.getConversationMessages(conversation.id);
-      
+
       if (result.success && result.data) {
         // Convert messages to UI format
         const loadedMessages = result.data.messages.map((msg, index) => ({
@@ -163,7 +213,7 @@ const ChatInterface = ({
             model_used: msg.model_used
           }
         }));
-        
+
         setMessages(loadedMessages);
         setConversationId(conversation.id);
         setError(null);
@@ -191,26 +241,73 @@ const ChatInterface = ({
   };
 
   const handleVoiceInput = async () => {
+    // Check if browser supports Speech Recognition
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      toast.error('Voice input not supported in your browser. Please use Chrome, Edge, or Safari.');
+      return;
+    }
+
     if (isRecording) {
       // Stop recording
       setIsRecording(false);
-      toast.success('Voice recording stopped');
-      // TODO: Process audio and send to backend
-      toast.error('Voice processing not yet implemented');
+      toast.info('Voice input stopped');
     } else {
-      // Start recording
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        toast.error('Voice input not supported in your browser');
-        return;
-      }
-      
-      try {
-        setIsRecording(true);
-        toast.success('Recording... Click again to stop');
-        // TODO: Implement actual audio recording
-      } catch (err) {
-        toast.error('Failed to access microphone');
+      // Start speech recognition
+      setIsRecording(true);
+
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false; // Stop after one phrase
+      recognition.lang = 'en-IN'; // Indian English (change as needed)
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+
+      recognition.onstart = () => {
+        toast.success('🎤 Listening... Speak now!', { duration: 2000 });
+      };
+
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        const confidence = event.results[0][0].confidence;
+
         setIsRecording(false);
+        setInputText(transcript);
+
+        toast.success(`Heard: "${transcript}"`, {
+          duration: 3000,
+          icon: '✅'
+        });
+
+        // Optionally auto-send after successful transcription
+        // Uncomment to enable auto-send:
+        // setTimeout(() => handleSendMessage(transcript), 500);
+      };
+
+      recognition.onerror = (event) => {
+        setIsRecording(false);
+
+        let errorMessage = 'Speech recognition failed';
+        if (event.error === 'no-speech') {
+          errorMessage = 'No speech detected. Please try again.';
+        } else if (event.error === 'audio-capture') {
+          errorMessage = 'Microphone not accessible';
+        } else if (event.error === 'not-allowed') {
+          errorMessage = 'Microphone permission denied';
+        }
+
+        toast.error(errorMessage);
+      };
+
+      recognition.onend = () => {
+        setIsRecording(false);
+      };
+
+      try {
+        recognition.start();
+      } catch (err) {
+        setIsRecording(false);
+        toast.error('Failed to start voice recognition');
       }
     }
   };
@@ -232,32 +329,67 @@ const ChatInterface = ({
     }
 
     setIsUploading(true);
-    toast.loading('Processing file...');
+    const loadingToast = toast.loading(`Processing ${file.name}...`);
 
     try {
       const reader = new FileReader();
+
       reader.onload = async (e) => {
         const base64Data = e.target?.result?.toString().split(',')[1];
         const inputType = file.type.startsWith('image/') ? 'image' : 'document';
-        
-        // TODO: Send to backend with file data
-        toast.dismiss();
-        toast.error('File upload processing not yet implemented');
+
+        try {
+          // 1. Upload to backend immediately (Background Processing)
+          const uploadResult = await api.uploadDocument(base64Data, file.name, conversationId);
+
+          if (!uploadResult.success) {
+            throw new Error(uploadResult.error || 'Upload failed');
+          }
+
+          // 2. Set as pending attachment with the returned ID
+          setPendingAttachment({
+            name: file.name,
+            type: inputType,
+            data: base64Data, // Keep for preview if needed
+            documentId: uploadResult.data.document_id // Store the ID!
+          });
+
+          toast.dismiss(loadingToast);
+          toast.success('File processed & ready! Type your message.');
+
+        } catch (err) {
+          toast.dismiss(loadingToast);
+          toast.error('Failed to process file');
+          console.error('File processing error:', err);
+        } finally {
+          setIsUploading(false);
+          // Clear file input
+          if (fileInputRef.current) {
+            fileInputRef.current.value = '';
+          }
+        }
+      };
+
+      reader.onerror = () => {
+        toast.dismiss(loadingToast);
+        toast.error('Failed to read file');
         setIsUploading(false);
       };
+
       reader.readAsDataURL(file);
+
     } catch (err) {
-      toast.dismiss();
-      toast.error('Failed to process file');
+      toast.dismiss(loadingToast);
+      toast.error('Failed to upload file');
       setIsUploading(false);
     }
   };
 
   const formatTime = (timestamp) => {
     const date = new Date(timestamp);
-    return date.toLocaleTimeString('en-US', { 
-      hour: '2-digit', 
-      minute: '2-digit' 
+    return date.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit'
     });
   };
 
@@ -269,7 +401,7 @@ const ChatInterface = ({
         onSubmit={handleSubmitRating}
         conversationId={conversationId}
       />
-      
+
       <div className={`chat-interface ${sidebarOpen ? 'sidebar-open' : ''}`}>
         <ConversationSidebar
           currentConversationId={conversationId}
@@ -277,130 +409,155 @@ const ChatInterface = ({
           onNewConversation={handleNewConversation}
           isOpen={sidebarOpen}
           onClose={() => setSidebarOpen(false)}
+          onRefreshReady={(refetchFn) => {
+            sidebarRefreshRef.current = refetchFn;
+          }}
         />
 
-      {/* Quick Actions */}
-      {quickActions.length > 0 && messages.length === 0 && (
-        <div className="quick-actions">
-          <p className="quick-actions-label">Quick Actions:</p>
-          <div className="quick-actions-buttons">
-            {quickActions.map((action, index) => (
-              <button
-                key={index}
-                className="quick-action-btn"
-                onClick={() => handleQuickAction(action)}
-              >
-                {action}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Messages Container */}
-      <div className="messages-container">
-        {messages.length === 0 && !isTyping && (
-          <div className="empty-state">
-            <div className="empty-icon">💬</div>
-            <p>Start a conversation!</p>
-            <p className="empty-subtitle">Ask me anything about your finances</p>
+        {/* Conversation Tools - Settings and Document Manager */}
+        {conversationId && (
+          <div className="conversation-tools">
+            <ConversationSettings
+              conversationId={conversationId}
+              currentVisibility={conversationVisibility}
+              onVisibilityChange={(newVisibility) => {
+                setConversationVisibility(newVisibility);
+                toast.success(`Conversation is now ${newVisibility}`);
+              }}
+            />
+            <DocumentManager conversationId={conversationId} />
           </div>
         )}
 
-        <AnimatePresence>
-          {messages.map((message) => (
-            <motion.div
-              key={message.id}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.3 }}
-              className={`message ${message.role} ${message.isError ? 'error' : ''}`}
-            >
-              <div className="message-avatar">
-                {message.role === 'user' ? '👤' : '🤖'}
-              </div>
-              <div className="message-content">
-                <div className="message-text">{message.content}</div>
-                <div className="message-time">{formatTime(message.timestamp)}</div>
-                {message.role === 'assistant' && message.metadata && (
-                  <MessageMetadata metadata={message.metadata} />
-                )}
-              </div>
-            </motion.div>
-          ))}
-        </AnimatePresence>
-
-        {isTyping && (
-          <div className="message assistant typing">
-            <div className="message-avatar">🤖</div>
-            <div className="message-content">
-              <div className="typing-indicator">
-                <span></span>
-                <span></span>
-                <span></span>
-              </div>
+        {/* Quick Actions */}
+        {quickActions.length > 0 && messages.length === 0 && (
+          <div className="quick-actions">
+            <p className="quick-actions-label">Quick Actions:</p>
+            <div className="quick-actions-buttons">
+              {quickActions.map((action, index) => (
+                <button
+                  key={index}
+                  className="quick-action-btn"
+                  onClick={() => handleQuickAction(action)}
+                >
+                  {action}
+                </button>
+              ))}
             </div>
           </div>
         )}
 
-        <div ref={messagesEndRef} />
-      </div>
+        {/* Messages Container */}
+        <div className="messages-container">
+          {messages.length === 0 && !isTyping && (
+            <div className="empty-state">
+              <div className="empty-icon">💬</div>
+              <p>Start a conversation!</p>
+              <p className="empty-subtitle">Ask me anything about your finances</p>
+            </div>
+          )}
 
-      {/* Error Display */}
-      {error && (
-        <div className="chat-error">
-          {error}
+          <AnimatePresence>
+            {messages.map((message) => (
+              <motion.div
+                key={message.id}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{ duration: 0.3 }}
+                className={`message ${message.role} ${message.isError ? 'error' : ''}`}
+              >
+                <div className="message-avatar">
+                  {message.role === 'user' ? '👤' : '🤖'}
+                </div>
+                <div className="message-content">
+                  <div className="message-text">{message.content}</div>
+                  <div className="message-time">{formatTime(message.timestamp)}</div>
+                  {message.role === 'assistant' && message.metadata && (
+                    <MessageMetadata metadata={message.metadata} />
+                  )}
+                </div>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+
+          {isTyping && (
+            <div className="message assistant typing">
+              <div className="message-avatar">🤖</div>
+              <div className="message-content">
+                <div className="typing-indicator">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div ref={messagesEndRef} />
         </div>
-      )}
 
-      {/* Input Box */}
-      <div className="input-container">
-        <input
-          type="file"
-          ref={fileInputRef}
-          onChange={handleFileUpload}
-          accept=".pdf,.jpg,.jpeg,.png"
-          style={{ display: 'none' }}
-        />
-        
-        <button
-          className="input-action-btn"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={isTyping || isUploading}
-          title="Attach file (PDF, Image)"
-        >
-          📎
-        </button>
-        
-        <button
-          className={`input-action-btn ${isRecording ? 'recording' : ''}`}
-          onClick={handleVoiceInput}
-          disabled={isTyping || isUploading}
-          title={isRecording ? "Stop recording" : "Voice input"}
-        >
-          {isRecording ? '⏹️' : '🎤'}
-        </button>
-        
-        <textarea
-          className="message-input"
-          value={inputText}
-          onChange={(e) => setInputText(e.target.value)}
-          onKeyPress={handleKeyPress}
-          placeholder={placeholder}
-          rows={1}
-          disabled={isTyping || isRecording || isUploading}
-        />
-        
-        <button
-          className="send-button"
-          onClick={() => handleSendMessage()}
-          disabled={!inputText.trim() || isTyping || isRecording || isUploading}
-        >
-          <span className="send-icon">➤</span>
-        </button>
+        {/* Error Display */}
+        {error && (
+          <div className="chat-error">
+            {error}
+          </div>
+        )}
+
+        {/* Input Box */}
+        <div className="input-container">
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileUpload}
+            accept=".pdf,.jpg,.jpeg,.png"
+            style={{ display: 'none' }}
+          />
+
+          <button
+            className="input-action-btn"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isTyping || isUploading}
+            title="Attach file (PDF, Image)"
+          >
+            📎
+          </button>
+
+          <button
+            className={`input-action-btn ${isRecording ? 'recording' : ''}`}
+            onClick={handleVoiceInput}
+            disabled={isTyping || isUploading}
+            title={isRecording ? "Stop recording" : "Voice input"}
+          >
+            {isRecording ? '⏹️' : '🎤'}
+          </button>
+
+          <textarea
+            className="message-input"
+            value={inputText}
+            onChange={(e) => setInputText(e.target.value)}
+            onKeyPress={handleKeyPress}
+            placeholder={placeholder}
+            rows={1}
+            disabled={isTyping || isRecording || isUploading}
+          />
+
+          <button
+            className="send-btn"
+            onClick={() => handleSendMessage()}
+            disabled={(!inputText.trim() && !pendingAttachment) || isTyping || isUploading}
+            title={isUploading ? "Processing file..." : "Send message"}
+          >
+            {isUploading ? (
+              <span className="loading-dots">...</span>
+            ) : (
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
+              </svg>
+            )}
+          </button>
+        </div>
       </div>
-    </div>
     </>
   );
 };

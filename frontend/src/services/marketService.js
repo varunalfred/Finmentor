@@ -3,15 +3,27 @@ import axios from 'axios';
 const API_BASE_URL = '/api';
 
 /**
- * Fetch all Indian market indices
+ * Fetch all market indices (Indian, Global, Commodities)
  * @returns {Promise} Market indices data
  */
 export const getMarketIndices = async () => {
   try {
-    const response = await axios.get(`${API_BASE_URL}/market/indices`);
+    const response = await axios.get(`${API_BASE_URL}/market/live-indices`);
+
+    // Transform response to match MarketTicker expectations
+    // Flatten all indices into a single array
+    const allIndices = [
+      ...(response.data.indian_markets || []),
+      ...(response.data.global_markets || []),
+      ...(response.data.commodities || [])
+    ];
+
     return {
       success: true,
-      data: response.data
+      data: {
+        indices: allIndices,
+        last_updated: new Date().toISOString()
+      }
     };
   } catch (error) {
     console.error('Error fetching market indices:', error);
@@ -22,46 +34,9 @@ export const getMarketIndices = async () => {
   }
 };
 
-/**
- * Fetch a single market index
- * @param {string} symbol - Yahoo Finance symbol (e.g., ^NSEI)
- * @returns {Promise} Market index data
- */
-export const getSingleIndex = async (symbol) => {
-  try {
-    const response = await axios.get(`${API_BASE_URL}/market/indices/${symbol}`);
-    return {
-      success: true,
-      data: response.data
-    };
-  } catch (error) {
-    console.error(`Error fetching index ${symbol}:`, error);
-    return {
-      success: false,
-      error: error.response?.data?.detail || 'Failed to fetch index data'
-    };
-  }
-};
 
-/**
- * Force refresh market data (clears cache)
- * @returns {Promise} Updated market indices
- */
-export const refreshMarketData = async () => {
-  try {
-    const response = await axios.post(`${API_BASE_URL}/market/refresh`);
-    return {
-      success: true,
-      data: response.data
-    };
-  } catch (error) {
-    console.error('Error refreshing market data:', error);
-    return {
-      success: false,
-      error: error.response?.data?.detail || 'Failed to refresh market data'
-    };
-  }
-};
+
+
 
 /**
  * Format currency for Indian market (INR)
@@ -120,13 +95,13 @@ export const isMarketOpen = () => {
   const now = new Date();
   const day = now.getDay(); // 0 = Sunday, 6 = Saturday
   const hour = now.getHours();
-  
+
   // Weekend check
   if (day === 0 || day === 6) return false;
-  
+
   // Market hours check (approximate - doesn't account for timezone)
   if (hour >= 9 && hour < 16) return true;
-  
+
   return false;
 };
 

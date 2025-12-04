@@ -1,74 +1,30 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState } from 'react';
+import { useLiveIndices } from '../../hooks/useLiveIndices';
 import './LiveMarketsCarousel.css';
 
 const LiveMarketsCarousel = () => {
   const [currentSlide, setCurrentSlide] = useState(0);
-  const [marketData, setMarketData] = useState({
-    indian_markets: [],
-    global_markets: [],
-    commodities: []
-  });
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
   const [isPaused, setIsPaused] = useState(false);
-  const intervalRef = useRef(null);
-  const dataRefreshRef = useRef(null);
+
+  // ✅ Use React Query hook - automatic fetching and 30s refresh
+  const { data: marketData, isLoading: loading, error: fetchError } = useLiveIndices();
+
+  const error = fetchError ? 'Unable to load market data. Please try again later.' : null;
 
   const slides = [
-    { key: 'indian_markets', title: 'Indian Markets', data: marketData.indian_markets },
-    { key: 'global_markets', title: 'Global Markets', data: marketData.global_markets },
-    { key: 'commodities', title: 'Commodities', data: marketData.commodities }
+    { key: 'indian_markets', title: 'Indian Markets', data: marketData?.indian_markets || [] },
+    { key: 'global_markets', title: 'Global Markets', data: marketData?.global_markets || [] },
+    { key: 'commodities', title: 'Commodities', data: marketData?.commodities || [] }
   ];
 
-  // Fetch market data
-  const fetchMarketData = async () => {
-    try {
-      const response = await fetch('/api/market/live-indices');
-      if (!response.ok) {
-        throw new Error('Failed to fetch market data');
-      }
-      const data = await response.json();
-      setMarketData(data);
-      setError(null);
-    } catch (err) {
-      console.error('Error fetching market data:', err);
-      setError('Unable to load market data. Please try again later.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Initial data load
-  useEffect(() => {
-    fetchMarketData();
-  }, []);
-
-  // Auto-refresh data every 30 seconds
-  useEffect(() => {
-    dataRefreshRef.current = setInterval(() => {
-      fetchMarketData();
-    }, 30000);
-
-    return () => {
-      if (dataRefreshRef.current) {
-        clearInterval(dataRefreshRef.current);
-      }
-    };
-  }, []);
-
-  // Auto-rotate carousel every 5 seconds
-  useEffect(() => {
+  // ✅ Auto-rotate carousel - simplified (no data fetching logic)
+  React.useEffect(() => {
     if (!isPaused && !loading) {
-      intervalRef.current = setInterval(() => {
+      const interval = setInterval(() => {
         setCurrentSlide((prev) => (prev + 1) % slides.length);
       }, 5000);
+      return () => clearInterval(interval);
     }
-
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-    };
   }, [isPaused, loading, slides.length]);
 
   const handleDotClick = (index) => {
@@ -147,7 +103,7 @@ const LiveMarketsCarousel = () => {
   const currentSlideData = slides[currentSlide];
 
   return (
-    <div 
+    <div
       className="live-markets-carousel"
       onMouseEnter={() => setIsPaused(true)}
       onMouseLeave={() => setIsPaused(false)}
@@ -155,15 +111,15 @@ const LiveMarketsCarousel = () => {
       <div className="carousel-header">
         <h2 className="carousel-title">Live Markets</h2>
         <div className="carousel-controls">
-          <button 
-            onClick={handlePrevious} 
+          <button
+            onClick={handlePrevious}
             className="nav-button"
             aria-label="Previous slide"
           >
             ‹
           </button>
-          <button 
-            onClick={handleNext} 
+          <button
+            onClick={handleNext}
             className="nav-button"
             aria-label="Next slide"
           >
@@ -174,7 +130,7 @@ const LiveMarketsCarousel = () => {
 
       <div className="carousel-container">
         <div className="carousel-slides">
-          <div 
+          <div
             className="slide-wrapper"
             style={{ transform: `translateX(-${currentSlide * 100}%)` }}
           >
@@ -186,7 +142,7 @@ const LiveMarketsCarousel = () => {
                     slide.data.map((market, index) => {
                       const isPositive = market.change >= 0;
                       const isClosed = market.last_updated && isMarketClosed(market.last_updated);
-                      
+
                       return (
                         <div key={index} className="market-card">
                           <div className="market-header">

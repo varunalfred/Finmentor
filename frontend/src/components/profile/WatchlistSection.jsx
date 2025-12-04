@@ -1,77 +1,25 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { useWatchlist, useWatchlistStats } from '../../hooks/useApi';
 import './WatchlistSection.css';
 
+// API Base URL - uses environment variable or defaults to localhost
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+
 const WatchlistSection = () => {
-  const [watchlist, setWatchlist] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // ✅ Use React Query hooks - automatic caching & 30s auto-refresh
+  const { data: watchlist = [], isLoading } = useWatchlist();
+  const { data: stats } = useWatchlistStats();
+
   const [searchTerm, setSearchTerm] = useState('');
-  const [sortBy, setSortBy] = useState('date'); // date, name, price, change
+  const [sortBy, setSortBy] = useState('date');
   const [sortOrder, setSortOrder] = useState('desc');
-  const [stats, setStats] = useState(null);
-  const [isVisible, setIsVisible] = useState(true);
-
-  useEffect(() => {
-    // Only fetch if component is visible
-    if (isVisible) {
-      fetchWatchlist();
-      fetchStats();
-    }
-    
-    // Auto-refresh every 30 seconds, but only when tab is active
-    const interval = setInterval(() => {
-      if (document.visibilityState === 'visible' && isVisible) {
-        fetchWatchlist();
-        fetchStats();
-      }
-    }, 30000);
-
-    return () => clearInterval(interval);
-  }, [isVisible]);
-
-  const fetchWatchlist = async () => {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:8000/api/watchlist', {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setWatchlist(data);
-      }
-      setLoading(false);
-    } catch (error) {
-      console.error('Error fetching watchlist:', error);
-      setLoading(false);
-    }
-  };
-
-  const fetchStats = async () => {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:8000/api/watchlist/stats', {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setStats(data);
-      }
-    } catch (error) {
-      console.error('Error fetching stats:', error);
-    }
-  };
 
   const handleRemove = async (symbol) => {
     if (!confirm(`Remove ${symbol} from watchlist?`)) return;
 
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`http://localhost:8000/api/watchlist/${symbol}`, {
+      const token = localStorage.getItem('access_token');
+      const response = await fetch(`${API_BASE_URL}/api/watchlist/${symbol}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -89,8 +37,8 @@ const WatchlistSection = () => {
 
   const handleExport = async () => {
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:8000/api/watchlist/export', {
+      const token = localStorage.getItem('access_token');
+      const response = await fetch(`${API_BASE_URL}/api/watchlist/export`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -111,13 +59,13 @@ const WatchlistSection = () => {
   };
 
   const sortedWatchlist = [...watchlist]
-    .filter(item => 
+    .filter(item =>
       item.symbol.toLowerCase().includes(searchTerm.toLowerCase()) ||
       item.company_name?.toLowerCase().includes(searchTerm.toLowerCase())
     )
     .sort((a, b) => {
       let compareValue = 0;
-      
+
       switch (sortBy) {
         case 'name':
           compareValue = (a.company_name || a.symbol).localeCompare(b.company_name || b.symbol);
@@ -132,11 +80,11 @@ const WatchlistSection = () => {
         default:
           compareValue = new Date(a.created_at) - new Date(b.created_at);
       }
-      
+
       return sortOrder === 'asc' ? compareValue : -compareValue;
     });
 
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="watchlist-loading">
         <div className="spinner"></div>
@@ -279,8 +227,8 @@ const WatchlistSection = () => {
                   {item.change !== null && (
                     <div className={`change-badge ${item.change >= 0 ? 'positive' : 'negative'}`}>
                       <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
-                              d={item.change >= 0 ? "M5 10l7-7m0 0l7 7m-7-7v18" : "M19 14l-7 7m0 0l-7-7m7 7V3"} />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                          d={item.change >= 0 ? "M5 10l7-7m0 0l7 7m-7-7v18" : "M19 14l-7 7m0 0l-7-7m7 7V3"} />
                       </svg>
                       <span>{item.change >= 0 ? '+' : ''}{item.change.toFixed(2)}</span>
                       <span>({item.change_percent >= 0 ? '+' : ''}{item.change_percent.toFixed(2)}%)</span>

@@ -1,16 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { addToWatchlist, removeFromWatchlist } from '../../services/watchlistService';
+import { useStockData } from '../../hooks/useApi';
 import './StockCarousel.css';
 
 const StockCarousel = ({ onAddToWatchlist }) => {
-  const [stocks, setStocks] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('gainers');
   const [marketCap, setMarketCap] = useState('large');
   const [showCapDropdown, setShowCapDropdown] = useState(false);
   const [watchlist, setWatchlist] = useState(new Set());
   const [toast, setToast] = useState({ show: false, message: '', type: '' });
+
+  // ✅ Use React Query hook - automatic caching and refetching
+  const { data, isLoading: loading, error: fetchError } = useStockData(activeTab, marketCap);
+  const stocks = data?.stocks || [];
+  const error = fetchError ? 'Failed to load stock data. Please try again.' : null;
 
   const tabs = [
     { id: 'gainers', label: 'Gainers' },
@@ -26,32 +29,7 @@ const StockCarousel = ({ onAddToWatchlist }) => {
     { value: 'small', label: 'Small Cap' }
   ];
 
-  useEffect(() => {
-    fetchStocks();
-  }, [activeTab, marketCap]);
-
-  const fetchStocks = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      
-      const response = await fetch(
-        `/api/market/stocks?category=${activeTab}&cap=${marketCap}`
-      );
-      
-      if (!response.ok) {
-        throw new Error('Failed to fetch stocks');
-      }
-      
-      const data = await response.json();
-      setStocks(data.stocks || []);
-    } catch (err) {
-      console.error('Error fetching stocks:', err);
-      setError('Failed to load stock data. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
+  // ✅ No useEffect or fetchStocks needed - React Query handles it
 
   const handleTabChange = (tabId) => {
     setActiveTab(tabId);
@@ -64,7 +42,7 @@ const StockCarousel = ({ onAddToWatchlist }) => {
 
   const handleBookmark = async (stock) => {
     const isInWatchlist = watchlist.has(stock.symbol);
-    
+
     try {
       if (isInWatchlist) {
         // Remove from watchlist
@@ -72,7 +50,7 @@ const StockCarousel = ({ onAddToWatchlist }) => {
         const newWatchlist = new Set(watchlist);
         newWatchlist.delete(stock.symbol);
         setWatchlist(newWatchlist);
-        
+
         showToast('Removed from watchlist', 'success');
       } else {
         // Add to watchlist
@@ -80,10 +58,10 @@ const StockCarousel = ({ onAddToWatchlist }) => {
         const newWatchlist = new Set(watchlist);
         newWatchlist.add(stock.symbol);
         setWatchlist(newWatchlist);
-        
+
         showToast('Added to watchlist', 'success');
       }
-      
+
       if (onAddToWatchlist) {
         onAddToWatchlist(stock, !isInWatchlist);
       }
@@ -137,7 +115,7 @@ const StockCarousel = ({ onAddToWatchlist }) => {
       {/* Header */}
       <div className="carousel-title-row">
         <h2 className="carousel-title">Today's stocks</h2>
-        
+
         <div className="market-cap-filter">
           <button
             className="cap-dropdown-toggle"
@@ -145,7 +123,7 @@ const StockCarousel = ({ onAddToWatchlist }) => {
           >
             {marketCapOptions.find(opt => opt.value === marketCap)?.label || 'Large Cap'} ↓
           </button>
-          
+
           {showCapDropdown && (
             <div className="cap-dropdown-menu">
               {marketCapOptions.map((option) => (
@@ -249,7 +227,7 @@ const StockCarousel = ({ onAddToWatchlist }) => {
                       title={watchlist.has(stock.symbol) ? 'Remove from watchlist' : 'Add to watchlist'}
                     >
                       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+                        <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
                       </svg>
                     </button>
                   </div>

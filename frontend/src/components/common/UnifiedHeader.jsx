@@ -4,8 +4,8 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { useAuth } from '../../contexts/AuthContext';
 import './UnifiedHeader.css';
 
-const UnifiedHeader = ({ 
-  showSidebarToggle = false, 
+const UnifiedHeader = ({
+  showSidebarToggle = false,
   onSidebarToggle,
   showNewChatButton = false,
   onNewChat,
@@ -20,6 +20,7 @@ const UnifiedHeader = ({
     { id: 'home', label: 'Home', path: '/dashboard' },
     { id: 'profile', label: 'Profile', path: '/dashboard/profile' },
     { id: 'chat', label: 'FinMentor Chat', path: '/dashboard/chat' },
+    { id: 'community', label: '🌍 Community', path: '/dashboard/community' },
     { id: 'portfolio', label: 'My Portfolio', path: '/dashboard/portfolio' },
     { id: 'contact', label: 'Contact Us', path: '/dashboard/contact' }
   ];
@@ -70,22 +71,22 @@ const UnifiedHeader = ({
 
       <div className="header-actions">
         {showNewChatButton && hasMessages && (
-          <button 
-            className="new-conversation-btn" 
+          <button
+            className="new-conversation-btn"
             onClick={onNewChat}
             title="Start a new conversation"
           >
             + New Chat
           </button>
         )}
-        <button 
+        <button
           className="theme-toggle-btn"
           onClick={toggleTheme}
           aria-label="Toggle theme"
         >
           {isDark ? '☀️' : '🌙'}
         </button>
-        <button 
+        <button
           className="logout-btn"
           onClick={handleLogout}
         >

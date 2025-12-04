@@ -5,8 +5,15 @@
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* Stats Grid */
@@ -48,10 +55,21 @@
   color: white;
 }
 
-.stocks-icon { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
-.value-icon { background: linear-gradient(135deg, #8FABD4 0%, #435663 100%); }
-.gain-icon { background: linear-gradient(135deg, #48bb78 0%, #38a169 100%); }
-.loss-icon { background: linear-gradient(135deg, #f56565 0%, #e53e3e 100%); }
+.stocks-icon {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.value-icon {
+  background: linear-gradient(135deg, #8FABD4 0%, #435663 100%);
+}
+
+.gain-icon {
+  background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
+}
+
+.loss-icon {
+  background: linear-gradient(135deg, #f56565 0%, #e53e3e 100%);
+}
 
 .stat-content {
   flex: 1;
@@ -83,31 +101,44 @@
   gap: 1rem;
   margin-bottom: 2rem;
   flex-wrap: wrap;
+  align-items: center;
+  /* Restore vertical alignment */
 }
 
 .search-box {
   flex: 1;
   min-width: 250px;
   position: relative;
+  display: flex;
+  /* Make flex container */
+  align-items: center;
+  /* Center content vertically */
 }
 
 .search-icon {
   position: absolute;
   left: 1rem;
-  top: 50%;
-  transform: translateY(-50%);
   width: 20px;
   height: 20px;
   color: #a0aec0;
+  pointer-events: none;
+  /* Let clicks pass through */
+  z-index: 1;
 }
 
 .search-box input {
   width: 100%;
-  padding: 0.75rem 1rem 0.75rem 3rem;
+  height: 48px;
+  /* Enforce fixed height */
+  padding: 0 1rem 0 3rem;
+  /* Adjust padding for fixed height */
   border: 2px solid #e2e8f0;
   border-radius: 8px;
   font-size: 1rem;
   transition: all 0.3s ease;
+  box-sizing: border-box;
+  display: block;
+  /* Ensure block display */
 }
 
 .search-box input:focus {
@@ -119,16 +150,24 @@
 .sort-controls {
   display: flex;
   gap: 0.5rem;
+  align-items: center;
+  /* Ensure children align vertically */
 }
 
 .sort-select {
-  padding: 0.75rem 1rem;
+  height: 48px;
+  /* Enforce fixed height */
+  padding: 0 1rem;
+  /* Adjust padding */
   border: 2px solid #e2e8f0;
   border-radius: 8px;
   font-size: 0.875rem;
   background: white;
   cursor: pointer;
   transition: all 0.3s ease;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
 }
 
 .sort-select:focus {
@@ -138,7 +177,10 @@
 
 .sort-order-btn,
 .export-btn {
-  padding: 0.75rem 1rem;
+  height: 48px;
+  /* Enforce fixed height */
+  padding: 0 1rem;
+  /* Adjust padding */
   border: 2px solid #e2e8f0;
   border-radius: 8px;
   background: white;
@@ -148,6 +190,7 @@
   gap: 0.5rem;
   font-weight: 500;
   transition: all 0.3s ease;
+  box-sizing: border-box;
 }
 
 .sort-order-btn svg,

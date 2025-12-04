@@ -48,7 +48,7 @@ class SmartMultiAgentOrchestrator:
         self, 
         hybrid_system: HybridFinMentorSystem,
         rpm_limit: int = 10,
-        max_concurrent: int = 2
+        max_concurrent: int = 1  # FIXED: Changed from 2 to 1 for sequential execution
     ):
         """
         Args:
@@ -104,26 +104,30 @@ class SmartMultiAgentOrchestrator:
         Select the right team of agents for this query
         (Ported from old orchestrator for backward compatibility)
         """
-        # Map intents to primary agents
+        # Map intents to primary agents - OPTIMIZED FOR RATE LIMITS
         intent_to_agents = {
-            QueryIntent.MARKET_ANALYSIS: [AgentType.MARKET_ANALYST, AgentType.NEWS_SENTIMENT],
-            QueryIntent.PORTFOLIO_ADVICE: [AgentType.PORTFOLIO_OPTIMIZER, AgentType.RISK_ASSESSMENT],
-            QueryIntent.RISK_ASSESSMENT: [AgentType.RISK_ASSESSMENT, AgentType.BEHAVIORAL_ANALYSIS],
+            QueryIntent.MARKET_ANALYSIS: [AgentType.MARKET_ANALYST],  # Just 1
+            QueryIntent.PORTFOLIO_ADVICE: [AgentType.PORTFOLIO_OPTIMIZER, AgentType.RISK_ASSESSMENT],  # Keep 2
+            QueryIntent.RISK_ASSESSMENT: [AgentType.RISK_ASSESSMENT],  # Just 1
             QueryIntent.EDUCATIONAL_QUERY: [AgentType.EDUCATION],
             QueryIntent.GENERAL_CHAT: [AgentType.EDUCATION]
         }
-
         # Start with primary agents
         selected_agents = list(intent_to_agents.get(intent, [AgentType.EDUCATION]))
-
-        # Add more agents for complex queries
-        if complexity.value >= QueryComplexity.COMPLEX.value:
+        # OPTIMIZED: Add fewer agents for COMPLEX
+        if complexity == QueryComplexity.MODERATE:
+            if intent == QueryIntent.MARKET_ANALYSIS:
+                selected_agents.append(AgentType.TECHNICAL_ANALYSIS)
+        
+        elif complexity == QueryComplexity.COMPLEX:
+            # Add JUST 1 more agent (was 2-3)
             if AgentType.PORTFOLIO_OPTIMIZER in selected_agents:
-                selected_agents.append(AgentType.TAX_ADVISOR)
-            if AgentType.MARKET_ANALYST in selected_agents:
-                selected_agents.append(AgentType.BEHAVIORAL_ANALYSIS)
-
-        if complexity == QueryComplexity.CRITICAL:
+                selected_agents.append(AgentType.BEHAVIORAL_ANALYSIS)  # Just 1
+            elif AgentType.MARKET_ANALYST in selected_agents:
+                selected_agents.append(AgentType.RISK_ASSESSMENT)  # Just 1
+        
+        elif complexity == QueryComplexity.CRITICAL:
+            # Full team for critical only
             selected_agents.extend([
                 AgentType.RISK_ASSESSMENT,
                 AgentType.BEHAVIORAL_ANALYSIS,
@@ -134,8 +138,12 @@ class SmartMultiAgentOrchestrator:
         seen = set()
         agents_list = [x for x in selected_agents if not (x in seen or seen.add(x))]
         
-        # Auto-include dependencies
+        # IMPORTANT: Dependencies ARE enabled for quality
+        # Sequential execution (max_concurrent=1) prevents rate limits
+        # This ensures each agent gets required context from dependencies
         agents_with_deps = self._expand_with_dependencies(agents_list)
+        
+        logger.info(f"✅ Complexity: {complexity.name} → Selected {len(agents_with_deps)} agents (with deps): {[a.value for a in agents_with_deps]}")
         
         return agents_with_deps
     

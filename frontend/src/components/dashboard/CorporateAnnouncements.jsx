@@ -1,12 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { fetchWithRetry } from '../../utils/apiHelpers';
+import React, { useMemo } from 'react';
+import { useAnnouncements } from '../../hooks/useApi';
 
 const CorporateAnnouncements = () => {
-  const [announcements, setAnnouncements] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [lastUpdated, setLastUpdated] = useState(null);
-
   // Format today's date as YYYY-MM-DD
   const getTodayDate = () => {
     const today = new Date();
@@ -16,50 +11,16 @@ const CorporateAnnouncements = () => {
     return `${year}-${month}-${day}`;
   };
 
-  const fetchAnnouncements = async () => {
-    setLoading(true);
-    setError(null);
+  const todayDate = useMemo(() => getTodayDate(), []);
 
-    try {
-      const todayDate = getTodayDate();
-      // Use backend proxy endpoint (fixes CORS)
-      const apiUrl = `/api/market/announcements?date=${todayDate}&category=Company%20Update`;
-      
-      console.log(`Fetching announcements for date: ${todayDate}`);
-      
-      const response = await fetch(apiUrl);
-      if (!response.ok) {
-        throw new Error('Failed to fetch announcements');
-      }
-      
-      const announcementData = await response.json();
-      
-      console.log(`Fetched ${announcementData.length} announcements`);
-      
-      setAnnouncements(announcementData);
-      setLastUpdated(new Date());
-      setLoading(false);
-    } catch (err) {
-      console.error('Error fetching announcements:', err);
-      setError(err.message || 'Failed to fetch announcements');
-      setLoading(false);
-    }
-  };
+  // ✅ Use React Query hook - automatic fetching and 5-minute refresh
+  const { data: announcements = [], isLoading: loading, error: fetchError, refetch } =
+    useAnnouncements(todayDate);
 
-  // Initial fetch
-  useEffect(() => {
-    fetchAnnouncements();
-  }, []);
+  const error = fetchError ? 'Failed to fetch announcements' : null;
+  const lastUpdated = useMemo(() => new Date(), [announcements]);
 
-  // Auto-refresh every 5 minutes (300000ms)
-  useEffect(() => {
-    const intervalId = setInterval(() => {
-      console.log('Auto-refreshing announcements...');
-      fetchAnnouncements();
-    }, 300000); // 5 minutes
-
-    return () => clearInterval(intervalId);
-  }, []);
+  // ✅ No useEffect needed - React Query handles fetching and auto-refresh
 
   // Format date for display
   const formatDate = (dateString) => {
@@ -160,14 +121,14 @@ const CorporateAnnouncements = () => {
         <div className="flex items-center gap-3">
           {lastUpdated && (
             <span className="text-xs text-gray-400">
-              Updated: {lastUpdated.toLocaleTimeString('en-IN', { 
-                hour: '2-digit', 
-                minute: '2-digit' 
+              Updated: {lastUpdated.toLocaleTimeString('en-IN', {
+                hour: '2-digit',
+                minute: '2-digit'
               })}
             </span>
           )}
           <button
-            onClick={fetchAnnouncements}
+            onClick={() => refetch()}
             className="p-2 hover:bg-gray-100 rounded-full transition-colors"
             title="Refresh"
           >
@@ -215,7 +176,7 @@ const CorporateAnnouncements = () => {
         <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2">
           {announcements.map((announcement, index) => {
             const attachmentUrl = getAttachmentUrl(announcement.ATTACHMENTNAME);
-            
+
             return (
               <div
                 key={index}

@@ -13,9 +13,33 @@ from PIL import Image
 import PyPDF2
 import logging
 
+from agents.smart_orchestrator import SmartMultiAgentOrchestrator
 from agents.hybrid_core import HybridFinMentorSystem
-from services.data_sources import DataSourcesManager
-from services.database import db_service, get_db
+from services.agentic_rag import AgenticRAG
+from services.database import get_db
+from models.database import User
+from models.document import UserDocument, DocumentChunk
+from sqlalchemy import update
+from sqlalchemy.ext.asyncio import AsyncSession
+from routers.auth import get_current_user  # Import from routers.auth
+
+
+# ============= Helper Functions =============
+
+
+
+
+async def process_image_input(image_data: str, message: str) -> dict:
+    """
+    Placeholder for image analysis - to be implemented later
+    """
+    return {
+        "description": "[Image analysis not yet implemented - coming soon]",
+        "success": False
+    }
+
+
+# ============= Data Manager Singleton =============
 from services.agentic_rag import rag_service
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,69 +60,69 @@ class ChatRequest(BaseModel):
     )
 
     # Optional data for different modalities
-    voice_data: Optional[str] = Field(default=None, description="Base64 encoded audio")
-    image_data: Optional[str] = Field(default=None, description="Base64 encoded image")
-    document_data: Optional[str] = Field(default=None, description="Base64 encoded document")
-
-    # User profile for personalization
-    user_profile: Dict[str, Any] = Field(
-        default={
-            "type": "beginner",
-            "education_level": "basic",
-            "preferred_language": "en",
-            "preferred_output": "text"  # text, voice, visual
-        }
-    )
-
     context: Optional[Dict[str, Any]] = None
+    voice_data: Optional[str] = Field(None, description="Base64 encoded voice data")
+    image_data: Optional[str] = Field(None, description="Base64 encoded image data")
+    document_data: Optional[str] = Field(None, description="Base64 encoded PDF data")
+    filename: Optional[str] = Field(None, description="Filename for document")
+    conversation_id: Optional[str] = Field(None, description="Conversation ID")
+    user_profile: Optional[Dict[str, Any]] = Field(None, description="User profile context")
 
 class ChatResponse(BaseModel):
     """Unified response with multimodal output options"""
+    response: str
+    metadata: Dict[str, Any] = {}
+
+class UploadRequest(BaseModel):
+    document_data: str = Field(..., description="Base64 encoded document content")
+    filename: str = Field(..., description="Original filename")
+    conversation_id: Optional[str] = Field(None, description="Conversation ID if known")
+
+class UploadResponse(BaseModel):
     success: bool
-    response: str  # Always include text response
-
-    # Optional outputs
-    voice_response: Optional[str] = None  # Base64 audio
-    visual_data: Optional[Dict[str, Any]] = None  # Charts, graphs
-
-    # Data and metadata
-    data: Optional[Dict[str, Any]] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-    error: Optional[str] = None
+    document_id: Optional[str] = None
+    filename: str
+    message: str
 
 # ============= System Initialization with Singletons =============
 
 hybrid_system = None
-data_manager = None
+# data_manager = None  # REMOVED: DataSourcesManager class doesn't exist
 
 # ============= Background Task Functions =============
 
-def store_embeddings_background(user_msg_id: str, assistant_msg_id: str, user_content: str, assistant_content: str):
+async def store_embeddings_background(user_msg_id: str, assistant_msg_id: str, user_content: str, assistant_content: str):
     """
     Background task to store message embeddings using sentence-transformers (all-MiniLM-L6-v2)
     Runs after response is sent to user, doesn't block the response
     """
-    import asyncio
     from services.agentic_rag import rag_service
+    from services.database import get_db
     
-    async def store():
-        try:
-            # Store user message embedding
-            await rag_service.store_message_embedding(user_msg_id, user_content)
-            logger.info(f"✅ Stored embedding for user message {user_msg_id[:8]}")
-            
-            # Store assistant message embedding
-            await rag_service.store_message_embedding(assistant_msg_id, assistant_content)
-            logger.info(f"✅ Stored embedding for assistant message {assistant_msg_id[:8]}")
-            
-        except Exception as e:
-            logger.error(f"❌ Background embedding storage failed: {e}")
-    
-    # Run the async function in the background thread using asyncio.run
     try:
-        asyncio.run(store())
+        # Get a new database session for this background task
+        async for db in get_db():
+            try:
+                # Update RAG service with this session
+                rag_service.set_db_session(db)
+               
+                # Store user message embedding
+                await rag_service.store_message_embedding(user_msg_id, user_content)
+                logger.info(f"✅ Stored embedding for user message {user_msg_id[:8]}")
+                
+                # Store assistant message embedding
+                await rag_service.store_message_embedding(assistant_msg_id, assistant_content)
+                logger.info(f"✅ Stored embedding for assistant message {assistant_msg_id[:8]}")
+                break  # Break after first (and only) iteration
+            except Exception as e:
+                logger.error(f"❌ Background embedding storage failed: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                break
     except Exception as e:
-        logger.error(f"❌ Failed to run background embedding task: {e}")
+        logger.error(f"❌ Failed to get database session for background task: {e}")
+
+
 
 def get_hybrid_system(db: AsyncSession = None) -> HybridFinMentorSystem:
     """Get or create hybrid system instance (singleton pattern)"""
@@ -116,12 +140,13 @@ def get_hybrid_system(db: AsyncSession = None) -> HybridFinMentorSystem:
         hybrid_system.agentic_rag.set_db_session(db)
     return hybrid_system
 
-def get_data_manager() -> DataSourcesManager:
-    """Get or create data manager instance (singleton pattern)"""
-    global data_manager
-    if data_manager is None:
-        data_manager = DataSourcesManager()
-    return data_manager
+# REMOVED: DataSourcesManager class doesn't exist
+# def get_data_manager() -> DataSourcesManager:
+#     """Get or create data manager instance (singleton pattern)"""
+#     global data_manager
+#     if data_manager is None:
+#         data_manager = DataSourcesManager()
+#     return data_manager
 
 # ============= Processing Functions =============
 
@@ -174,27 +199,96 @@ async def process_image_input(image_data: str, message: str) -> Dict[str, Any]:
         logger.error(f"Image processing error: {e}")
         return {"error": str(e)}
 
-async def process_document_input(document_data: str) -> Dict[str, Any]:
-    """Process document input (PDFs, etc.)"""
+async def process_document_input(
+    document_data: str,
+    filename: str,
+    user_id: str,
+    conversation_id: str,
+    is_public: bool = False,
+    db: AsyncSession = None
+) -> Dict[str, Any]:
+    """
+    Process document input (PDFs) - NOW WITH PERSISTENT STORAGE
+    Stores document in PGVector for future RAG retrieval
+    """
     try:
+        from services.document_storage import DocumentStorageService
+        
+        # Quick extraction for immediate response
         doc_bytes = base64.b64decode(document_data)
-
-        # Extract text from PDF
         pdf_reader = PyPDF2.PdfReader(io.BytesIO(doc_bytes))
         text = ""
         for page in pdf_reader.pages:
             text += page.extract_text()
-
+        
+        # Store in PGVector for future retrieval (if db provided)
+        storage_result = None
+        if db:
+            doc_service = DocumentStorageService(db)
+            storage_result = await doc_service.store_pdf(
+                pdf_data=document_data,
+                filename=filename,
+                user_id=user_id,
+                conversation_id=conversation_id,
+                is_public=is_public
+            )
+            logger.info(f"Document storage result: {storage_result}")
+        
         return {
             "type": "pdf",
             "pages": len(pdf_reader.pages),
             "text_preview": text[:500],
-            "full_text": text
+            "full_text": text,
+            "stored": storage_result is not None and storage_result.get("success", False),
+            "storage_info": storage_result
         }
 
     except Exception as e:
         logger.error(f"Document processing error: {e}")
         return {"error": str(e)}
+
+# ============= Upload Endpoint =============
+
+@router.post("/upload", response_model=UploadResponse)
+async def upload_document(
+    request: UploadRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Upload and process a document in the background.
+    Returns a document_id that can be used in chat.
+    """
+    try:
+        user_id = str(current_user.id)
+        conversation_id = request.conversation_id or f"{user_id}_temp"
+        
+        result = await process_document_input(
+            document_data=request.document_data,
+            filename=request.filename,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            db=db
+        )
+        
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=result["error"])
+            
+        # Extract document_id from storage_info if available
+        document_id = None
+        if result.get("stored") and result.get("storage_info"):
+            document_id = result["storage_info"].get("document_id")
+            
+        return UploadResponse(
+            success=True,
+            document_id=str(document_id) if document_id else None,
+            filename=request.filename,
+            message="Document processed successfully"
+        )
+        
+    except Exception as e:
+        logger.error(f"Upload error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ============= Main Chat Endpoint =============
 
@@ -234,9 +328,20 @@ async def chat(
             # Append image context to the message
             processed_message = f"{request.message} [Image context: {image_analysis}]"
 
-        # Document input - extract text from PDFs
+        # Document input - extract text from PDFs AND STORE IN PGVECTOR
         elif request.input_type == "document" and request.document_data:
-            doc_analysis = await process_document_input(request.document_data)
+            # Get conversation_id from request or create temporary one
+            conversation_id = getattr(request, 'conversation_id', user_id + "_conv")
+            filename = getattr(request, 'filename', "uploaded_document.pdf")
+            
+            doc_analysis = await process_document_input(
+                document_data=request.document_data,
+                filename=filename,
+                user_id=user_id,
+                conversation_id=conversation_id,
+                is_public=False,  # Default to private
+                db=db  # Pass database session for storage
+            )
             extracted_context.update(doc_analysis)
             # Append document preview to message
             processed_message = f"{request.message} [Document: {doc_analysis.get('text_preview', '')[:200]}]"
@@ -444,72 +549,25 @@ async def chat(
 
 # ============= Simple/Test Endpoints =============
 
-@router.post("/simple")
-async def simple_chat(message: str):
-    """Simplified chat endpoint for quick testing"""
-    try:
-        dm = get_data_manager()  # Get data manager singleton
-        message_lower = message.lower()  # Convert to lowercase for matching
 
-        # Stock price queries
-        if "price" in message_lower or "stock" in message_lower:  # Check for stock-related keywords
-            import re  # For regex pattern matching
-            symbols = re.findall(r'\b[A-Z]{1,5}\b', message)  # Find 1-5 uppercase letters (stock symbols)
 
-            if symbols:  # If we found any symbols
-                stock_data = await dm.get_stock_data(symbols[0])  # Get data for first symbol
-                if "error" not in stock_data:  # If data fetch succeeded
-                    return {
-                        "response": f"{stock_data['symbol']}: ${stock_data['price']['current']:.2f} ({stock_data['price']['change_percent']:.2f}%)",  # Format price info
-                        "data": stock_data  # Include full data
-                    }
+# REMOVED: This endpoint uses non-existent DataSourcesManager
+# @router.get("/test")
+# async def test_chat():
+#     """Test endpoint to verify system is working"""
+#     try:
+#         dm = get_data_manager()  # Get data manager to test connections
+#         market_data = await dm.get_economic_indicators()  # Test market data fetch
+#
+#         return {
+#             "status": "operational",  # System is working
+#             "market_sample": market_data,  # Show sample market data
+#             "supported_inputs": ["text", "voice", "image", "document"],  # List input types
+#             "available_llms": ["gemini", "openai", "anthropic"]  # List LLM options
+#         }
+#     except Exception as e:
+#         return {"status": "error", "message": str(e)}  # Return error status
 
-        # Market overview
-        if "market" in message_lower:  # Check for market keywords
-            indicators = await dm.get_economic_indicators()  # Fetch economic indicators
-            response = "Market Overview:\n"  # Start building response
-            for key, value in indicators["data"].items():  # Loop through each indicator
-                if isinstance(value, dict):  # If indicator has structured data
-                    response += f"• {key}: {value.get('value', 'N/A')}\n"  # Format as bullet point
-            return {"response": response, "data": indicators}  # Return formatted overview
-
-        # News
-        if "news" in message_lower:  # Check for news keywords
-            news = await dm.get_market_news()  # Fetch latest news
-            if news:  # If news items found
-                response = "Latest News:\n"  # Start response
-                for item in news[:3]:  # Show top 3 news items
-                    response += f"• {item['title']}\n"  # Format as bullet
-                return {"response": response, "data": news}  # Return news summary
-
-        # Default response if no patterns matched
-        return {
-            "response": "Ask me about stock prices, market data, or financial news!",  # Help message
-            "examples": [  # Show example queries
-                "What's AAPL price?",
-                "Show market overview",
-                "Latest financial news"
-            ]
-        }
-
-    except Exception as e:
-        return {"error": str(e)}  # Return error as JSON
-
-@router.get("/test")
-async def test_chat():
-    """Test endpoint to verify system is working"""
-    try:
-        dm = get_data_manager()  # Get data manager to test connections
-        market_data = await dm.get_economic_indicators()  # Test market data fetch
-
-        return {
-            "status": "operational",  # System is working
-            "market_sample": market_data,  # Show sample market data
-            "supported_inputs": ["text", "voice", "image", "document"],  # List input types
-            "available_llms": ["gemini", "openai", "anthropic"]  # List LLM options
-        }
-    except Exception as e:
-        return {"status": "error", "message": str(e)}  # Return error status
 
 # ============= File Upload Endpoints =============
 
@@ -581,59 +639,6 @@ async def upload_audio(
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))  # Return error
-
-# ============= Specialized Endpoints =============
-
-@router.post("/analyze-stock")
-async def analyze_stock(symbol: str):
-    """Quick stock analysis endpoint"""
-    try:
-        dm = get_data_manager()  # Get data manager
-        stock_data = await dm.get_stock_data(symbol.upper())  # Fetch stock data (uppercase symbol)
-
-        if "error" in stock_data:  # Check if data fetch failed
-            return {"success": False, "error": stock_data["error"]}  # Return error
-
-        # Get news
-        news = await dm.get_market_news(symbol)  # Fetch news for this stock
-
-        # Create analysis request
-        request = ChatRequest(
-            message=f"Analyze {symbol} stock with price ${stock_data['price']['current']:.2f}",  # Include price in query
-            user_profile={"type": "investor"}  # Mark as investor query
-        )
-
-        response = await chat(request)  # Get AI analysis
-
-        return {
-            "symbol": symbol.upper(),  # Standardized symbol
-            "current_data": stock_data,  # Current price and metrics
-            "news": news[:3] if news else [],  # Top 3 news items
-            "analysis": response.response  # AI's analysis
-        }
-
-    except Exception as e:
-        return {"success": False, "error": str(e)}  # Return error response
-
-@router.post("/education")
-async def get_education(topic: str, level: str = "beginner"):
-    """Educational content endpoint"""
-    try:
-        request = ChatRequest(
-            message=f"Explain {topic} in simple terms",  # Request simple explanation
-            user_profile={"education_level": level}  # Set education level (beginner/intermediate/advanced)
-        )
-
-        response = await chat(request)  # Get educational content
-
-        return {
-            "topic": topic,  # Topic being explained
-            "level": level,  # Education level used
-            "explanation": response.response  # The explanation
-        }
-
-    except Exception as e:
-        return {"success": False, "error": str(e)}  # Return error
 
 
 # ============= Conversation History Endpoints =============
@@ -831,5 +836,307 @@ async def delete_conversation(
         raise
     except Exception as e:
         logger.error(f"Error deleting conversation: {e}")
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ============= Public/Private Conversation & Document Management =============
+
+@router.post("/conversations/{conversation_id}/make-public")
+async def make_conversation_public(
+    conversation_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Make a conversation and all its documents public"""
+    try:
+        from models.database import Conversation
+        from models.document import UserDocument, DocumentChunk
+        from sqlalchemy import select, update
+        
+        # Get conversation  
+        conv_query = select(Conversation).where(Conversation.id == conversation_id)
+        conv_result = await db.execute(conv_query)
+        conversation = conv_result.scalar_one_or_none()
+        
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        # Update conversation
+        conversation.is_public = True
+        conversation.visibility = "public"
+        conversation.shared_at = datetime.utcnow()
+        
+        # Update all documents in this conversation
+        await db.execute(
+            update(UserDocument).where(
+                UserDocument.conversation_id == conversation_id
+            ).values(is_public=True)
+        )
+        
+        # Update all document chunks
+        await db.execute(
+            update(DocumentChunk).where(
+                DocumentChunk.conversation_id == conversation_id
+            ).values(is_public=True)
+        )
+        
+        await db.commit()
+        
+        logger.info(f"Conversation {conversation_id} made public")
+        
+        return {
+            "success": True,
+            "message": "Conversation is now public",
+            "conversation_id": conversation_id,
+            "shared_at": conversation.shared_at.isoformat() if conversation.shared_at else None
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error making conversation public: {e}")
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/conversations/{conversation_id}/make-private")
+async def make_conversation_private(
+    conversation_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Make a conversation private"""
+    try:
+        from models.database import Conversation
+        from models.document import UserDocument, DocumentChunk
+        from sqlalchemy import select, update
+        
+        conv_query = select(Conversation).where(Conversation.id == conversation_id)
+        conv_result = await db.execute(conv_query)
+        conversation = conv_result.scalar_one_or_none()
+        
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        conversation.is_public = False
+        conversation.visibility = "private"
+        
+        await db.execute(
+            update(UserDocument).where(
+                UserDocument.conversation_id == conversation_id
+            ).values(is_public=False)
+        )
+        
+        await db.execute(
+            update(DocumentChunk).where(
+                DocumentChunk.conversation_id == conversation_id
+            ).values(is_public=False)
+        )
+        
+        await db.commit()
+        
+        return {
+            "success": True,
+            "message": "Conversation is now private"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error making conversation private: {e}")
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/conversations/public")
+async def get_public_conversations(
+    limit: int = 20,
+    offset: int = 0,
+    sort_by: str = "recent",
+    db: AsyncSession = Depends(get_db)
+):
+    """Get public conversation feed"""
+    try:
+        from models.database import Conversation, User
+        from models.document import UserDocument
+        from sqlalchemy import select, func, desc
+        
+        query = select(
+            Conversation.id,
+            Conversation.title,
+            Conversation.topic,
+            Conversation.shared_at,
+            Conversation.view_count,
+            Conversation.upvote_count,
+            User.username,
+            func.count(UserDocument.id).label('document_count')
+        ).join(
+            User, Conversation.user_id == User.id
+        ).outerjoin(
+            UserDocument, Conversation.id == UserDocument.conversation_id
+        ).where(
+            Conversation.is_public == True
+        ).group_by(
+            Conversation.id, User.username
+        )
+        
+        # Sort
+        if sort_by == "popular":
+            query = query.order_by(desc(Conversation.view_count))
+        elif sort_by == "upvoted":
+            query = query.order_by(desc(Conversation.upvote_count))
+        else:
+            query = query.order_by(desc(Conversation.shared_at))
+        
+        query = query.limit(limit).offset(offset)
+        result = await db.execute(query)
+        conversations = result.fetchall()
+        
+        return {
+            "success": True,
+            "conversations": [
+                {
+                    "id": conv.id,
+                    "title": conv.title,
+                    "topic": conv.topic,
+                    "shared_at": conv.shared_at.isoformat() if conv.shared_at else None,
+                    "view_count": conv.view_count or 0,
+                    "upvote_count": conv.upvote_count or 0,
+                    "author": conv.username,
+                    "document_count": conv.document_count or 0
+                }
+                for conv in conversations
+            ]
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching public conversations: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/documents/mine")
+async def get_my_documents(
+    db: AsyncSession = Depends(get_db)
+):
+    """Get all documents uploaded by current user"""
+    try:
+        from models.document import UserDocument
+        from sqlalchemy import select
+        
+        # TODO: Get user_id from authenticated user
+        # For now, this will return all documents
+        # You should add authentication to get the actual user_id
+        
+        query = select(UserDocument).order_by(UserDocument.upload_date.desc())
+        
+        result = await db.execute(query)
+        documents = result.scalars().all()
+        
+        return {
+            "success": True,
+            "documents": [
+                {
+                    "id": str(doc.id),
+                    "filename": doc.filename,
+                    "file_size": doc.file_size,
+                    "total_pages": doc.total_pages,
+                    "is_public": doc.is_public,
+                    "upload_date": doc.upload_date.isoformat() if doc.upload_date else None,
+                    "conversation_id": str(doc.conversation_id) if doc.conversation_id else None
+                }
+                for doc in documents
+            ]
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching user documents: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/documents/public")
+async def get_public_documents(
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get public documents"""
+    try:
+        from models.document import UserDocument
+        from sqlalchemy import select
+        
+        query = select(UserDocument).where(
+            UserDocument.is_public == True
+        ).order_by(UserDocument.upload_date.desc()).limit(limit)
+        
+        result = await db.execute(query)
+        documents = result.scalars().all()
+        
+        return {
+            "success": True,
+            "documents": [doc.to_dict() for doc in documents]
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching public documents: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/documents/{document_id}")
+async def delete_document(
+    document_id: str,
+    user_id: str,  # Pass from auth
+    db: AsyncSession = Depends(get_db)
+):
+    """Delete a document"""
+    try:
+        from services.document_storage import DocumentStorageService
+        
+        doc_service = DocumentStorageService(db)
+        success = await doc_service.delete_document(document_id, user_id)
+        
+        if not success:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        return {
+            "success": True,
+            "message": "Document deleted"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting document: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/conversations/{conversation_id}/upvote")
+async def upvote_conversation(
+    conversation_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Upvote a public conversation"""
+    try:
+        from models.database import Conversation
+        from sqlalchemy import select
+        
+        conv_query = select(Conversation).where(
+            Conversation.id == conversation_id,
+            Conversation.is_public == True
+        )
+        conv_result = await db.execute(conv_query)
+        conversation = conv_result.scalar_one_or_none()
+        
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Public conversation not found")
+        
+        conversation.upvote_count = (conversation.upvote_count or 0) + 1
+        await db.commit()
+        
+        return {
+            "success": True,
+            "upvote_count": conversation.upvote_count
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error upvoting: {e}")
         await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))

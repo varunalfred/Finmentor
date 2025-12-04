@@ -5,9 +5,9 @@ import api from '../services/api';
 // Chat hooks
 export const useSendMessage = () => {
   const queryClient = useQueryClient();
-  
+
   return useMutation({
-    mutationFn: ({ message, conversationId }) => 
+    mutationFn: ({ message, conversationId }) =>
       api.sendChatMessage(message, conversationId),
     onSuccess: () => {
       queryClient.invalidateQueries(['conversations']);
@@ -37,7 +37,7 @@ export const useConversationMessages = (conversationId) => {
 
 export const useDeleteConversation = () => {
   const queryClient = useQueryClient();
-  
+
   return useMutation({
     mutationFn: (conversationId) => api.deleteConversation(conversationId),
     onSuccess: () => {
@@ -52,7 +52,7 @@ export const useDeleteConversation = () => {
 
 export const useSubmitRating = () => {
   return useMutation({
-    mutationFn: ({ conversationId, rating }) => 
+    mutationFn: ({ conversationId, rating }) =>
       api.submitSatisfactionRating(conversationId, rating),
     onSuccess: () => {
       toast.success('Thank you for your feedback!');
@@ -72,19 +72,64 @@ export const useStockData = (category = 'gainers', cap = 'large') => {
   });
 };
 
-export const useLiveIndices = () => {
-  return useQuery({
-    queryKey: ['liveIndices'],
-    queryFn: () => fetch('/api/market/live-indices').then(r => r.json()),
-    refetchInterval: 30000, // Refresh every 30 seconds
-    staleTime: 20000, // 20 seconds
-  });
-};
-
 export const useAnnouncements = (date) => {
   return useQuery({
     queryKey: ['announcements', date],
     queryFn: () => fetch(`/api/market/announcements?date=${date}`).then(r => r.json()),
     staleTime: 1000 * 60 * 5, // 5 minutes
+  });
+};
+
+// ✅ Watchlist hooks for Profile page optimization
+export const useWatchlist = () => {
+  return useQuery({
+    queryKey: ['watchlist'],
+    queryFn: async () => {
+      const token = localStorage.getItem('access_token');
+      const response = await fetch('/api/watchlist', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!response.ok) throw new Error('Failed to fetch watchlist');
+      const result = await response.json();
+      return result.data || result;
+    },
+    staleTime: 30 * 1000,
+    refetchInterval: 30 * 1000,
+  });
+};
+
+export const useWatchlistStats = () => {
+  return useQuery({
+    queryKey: ['watchlist', 'stats'],
+    queryFn: async () => {
+      const token = localStorage.getItem('access_token');
+      const response = await fetch('/api/watchlist/stats', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!response.ok) throw new Error('Failed to fetch watchlist stats');
+      const result = await response.json();
+      return result.data || result;
+    },
+    staleTime: 30 * 1000,
+    refetchInterval: 30 * 1000,
+  });
+};
+
+export const useActivity = (page, filter) => {
+  return useQuery({
+    queryKey: ['activity', page, filter],
+    queryFn: async () => {
+      const token = localStorage.getItem('access_token');
+      let url = `/api/profile/activity?page=${page}&page_size=20`;
+      if (filter !== 'all') url += `&activity_type=${filter}`;
+
+      const response = await fetch(url, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!response.ok) throw new Error('Failed to fetch activity');
+      return response.json();
+    },
+    staleTime: 2 * 60 * 1000,
+    keepPreviousData: true,
   });
 };

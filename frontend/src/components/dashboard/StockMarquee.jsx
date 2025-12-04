@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo } from 'react';
+import { useNifty50Stocks } from '../../hooks/useNifty50Stocks';
 import './StockMarquee.css';
 
 const StockMarquee = () => {
-  const [nifty50Stocks, setNifty50Stocks] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const { data: stocks, isLoading: loading } = useNifty50Stocks();
 
-  // NIFTY 50 component stocks
+  // NIFTY 50 component stocks for fallback
   const nifty50Symbols = [
     'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS', 'INFY.NS', 'HINDUNILVR.NS',
     'ICICIBANK.NS', 'SBIN.NS', 'BHARTIARTL.NS', 'ITC.NS', 'KOTAKBANK.NS',
@@ -19,60 +19,22 @@ const StockMarquee = () => {
     'BAJAJ-AUTO.NS', 'HDFCLIFE.NS', 'SBILIFE.NS', 'UPL.NS', 'LTIM.NS'
   ];
 
-  useEffect(() => {
-    fetchNifty50Data();
-    
-    // Auto-refresh every 2 minutes
-    const refreshInterval = setInterval(() => {
-      fetchNifty50Data();
-    }, 120000); // 2 minutes
-    
-    return () => clearInterval(refreshInterval);
-  }, []);
+  const nifty50Stocks = useMemo(() => {
+    if (stocks && stocks.length > 0) return stocks;
 
-  const fetchNifty50Data = async () => {
-    try {
-      setLoading(true);
-      
-      // Fetch from dedicated NIFTY 50 endpoint
-      const response = await fetch('/api/market/nifty50-stocks');
-      
-      if (!response.ok) {
-        throw new Error('Failed to fetch NIFTY 50 data');
-      }
-      
-      const data = await response.json();
-      
-      console.log(`✅ Fetched ${data.successful_fetches}/${data.total_stocks} NIFTY 50 stocks`);
-      
-      if (data.failed_symbols && data.failed_symbols.length > 0) {
-        console.warn('Failed to fetch:', data.failed_symbols);
-      }
-      
-      if (data.stocks && data.stocks.length > 0) {
-        setNifty50Stocks(data.stocks);
-      } else {
-        throw new Error('No stocks data received');
-      }
-      
-    } catch (err) {
-      console.error('Error fetching NIFTY 50 data:', err);
-      
-      // Fallback: Create display data for all 50 stocks
-      const fallbackStocks = nifty50Symbols.map((symbol, index) => ({
+    // Fallback data if API fails or returns empty
+    if (!loading) {
+      console.log('⚠️ Using fallback data for Stock Marquee');
+      return nifty50Symbols.map((symbol, index) => ({
         symbol: symbol,
         company_name: symbol.replace('.NS', ''),
         current_price: 1000 + (index * 50),
         change: (Math.random() - 0.5) * 50,
         change_percent: (Math.random() - 0.5) * 3
       }));
-      
-      console.log('⚠️ Using fallback data for all 50 stocks');
-      setNifty50Stocks(fallbackStocks);
-    } finally {
-      setLoading(false);
     }
-  };
+    return [];
+  }, [stocks, loading]);
 
   const getChangeClass = (change) => {
     if (change > 0) return 'positive';
@@ -84,16 +46,13 @@ const StockMarquee = () => {
     return `₹${price.toFixed(2)}`;
   };
 
-  if (loading) {
+  if (loading && nifty50Stocks.length === 0) {
     return (
       <div className="stock-marquee-container">
         <div className="marquee-loading">Loading NIFTY 50 stocks...</div>
       </div>
     );
   }
-
-  // Debug log
-  console.log(`📊 Rendering ${nifty50Stocks.length} NIFTY 50 stocks in marquee`);
 
   return (
     <div className="stock-marquee-container">

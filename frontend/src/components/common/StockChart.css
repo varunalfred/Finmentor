@@ -1,0 +1,14 @@
+.stock-chart-container {
+  width: 100%;
+  position: relative;
+}
+
+.stock-chart-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 12px;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}

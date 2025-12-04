@@ -112,6 +112,22 @@ body.dark .quick-action-btn:hover {
   color: #1a1a1a;
 }
 
+/* Conversation Tools */
+.conversation-tools {
+  display: flex;
+  gap: 12px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--light-border);
+  background-color: rgba(143, 171, 212, 0.05);
+  align-items: center;
+  justify-content: flex-end;
+}
+
+body.dark .conversation-tools {
+  border-bottom-color: var(--dark-border);
+  background-color: rgba(143, 171, 212, 0.1);
+}
+
 /* Messages Container */
 .messages-container {
   flex: 1;
@@ -193,6 +209,7 @@ body.dark .empty-state p {
     opacity: 0;
     transform: translateY(10px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -322,9 +339,13 @@ body.dark .typing-indicator {
 }
 
 @keyframes typingBounce {
-  0%, 60%, 100% {
+
+  0%,
+  60%,
+  100% {
     transform: translateY(0);
   }
+
   30% {
     transform: translateY(-10px);
   }
@@ -477,10 +498,13 @@ body.dark .input-action-btn {
 }
 
 @keyframes pulse {
-  0%, 100% {
+
+  0%,
+  100% {
     opacity: 1;
     transform: scale(1);
   }
+
   50% {
     opacity: 0.8;
     transform: scale(1.05);

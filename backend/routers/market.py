@@ -1,18 +1,33 @@
 """
 Market Data Router
 Provides stock market data, indices, and corporate announcements
+Optimized with Bulk Fetching and Database Caching
 """
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 import yfinance as yf
 import logging
 import httpx
+import pandas as pd
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func
+from services.database import get_db
+from models.database import MarketIndex, StockPrice
 from pydantic import BaseModel
+from curl_cffi import requests
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# ============= SSL/Rate Limit Fix =============
+# Create a custom session for yfinance to bypass SSL errors and rate limits
+yf_session = requests.Session()
+yf_session.verify = False
+yf_session.headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+}
 
 # ============= Response Models =============
 
@@ -57,134 +72,381 @@ NIFTY_50_SYMBOLS = [
     "UPL.NS", "BAJAJ-AUTO.NS", "SBILIFE.NS", "HDFCLIFE.NS", "ADANIENT.NS"
 ]
 
-# ============= Market Data Endpoints =============
+# ============= Helper Functions =============
 
-@router.get("/nifty50-stocks")
-async def get_nifty50_stocks():
-    """Get current data for all NIFTY 50 stocks"""
+async def fetch_and_store_nifty50(db: AsyncSession):
+    """Bulk fetch NIFTY 50 data and store in DB (Incremental Update)"""
     try:
-        stocks_data = []
-        failed_symbols = []
+        logger.info("Fetching NIFTY 50 data from Yahoo Finance (Bulk)...")
         
-        # Fetch data in batches to avoid rate limiting
+        # 1. Determine Start Date (Smart Gap Fill)
+        # Find the oldest 'last_updated' timestamp in DB to ensure we fill gaps for all stocks
+        stmt = select(func.min(StockPrice.last_updated))
+        result = await db.execute(stmt)
+        oldest_update = result.scalar()
+        
+        # Default to 1 month if DB is empty or data is very old
+        start_date = datetime.utcnow() - timedelta(days=30)
+        
+        if oldest_update:
+            # If we have data, fetch from the oldest update time minus a buffer (e.g., 1 day)
+            # to ensure we catch any corrections for that day
+            oldest_update_naive = oldest_update.replace(tzinfo=None)
+            # Ensure we don't go back further than 1 year (to keep fetch fast)
+            one_year_ago = datetime.utcnow() - timedelta(days=365)
+            
+            if oldest_update_naive > one_year_ago:
+                start_date = oldest_update_naive - timedelta(days=1)
+        
+        logger.info(f"Fetching data starting from: {start_date.date()}")
+        
+        # Bulk download
+        tickers = " ".join(NIFTY_50_SYMBOLS)
+        # yfinance expects 'start' as string 'YYYY-MM-DD'
+        data = yf.download(tickers, start=start_date.strftime("%Y-%m-%d"), interval="1d", group_by='ticker', progress=False, session=yf_session)
+        
+        updated_count = 0
+        
         for symbol in NIFTY_50_SYMBOLS:
             try:
-                ticker = yf.Ticker(symbol)
-                info = ticker.info
-                hist = ticker.history(period="2d")
+                # Extract data for this symbol
+                if len(NIFTY_50_SYMBOLS) > 1:
+                    stock_df = data[symbol]
+                else:
+                    stock_df = data
+
+                if stock_df.empty:
+                    continue
+
+                # Get valid close prices
+                valid_closes = stock_df['Close'].dropna()
                 
-                if len(hist) >= 2:
-                    current_price = hist['Close'].iloc[-1]
-                    prev_price = hist['Close'].iloc[-2]
+                if valid_closes.empty:
+                    continue
+                    
+                current_price = float(valid_closes.iloc[-1])
+                
+                # Calculate change
+                if len(valid_closes) >= 2:
+                    prev_price = float(valid_closes.iloc[-2])
                     change = current_price - prev_price
                     change_percent = (change / prev_price) * 100
                 else:
-                    # Fallback to current data only
-                    current_price = info.get('currentPrice', info.get('regularMarketPrice', 0))
-                    change = info.get('regularMarketChange', 0)
-                    change_percent = info.get('regularMarketChangePercent', 0)
+                    prev_price = current_price
+                    change = 0.0
+                    change_percent = 0.0
+
+                # Get volume
+                volume = 0
+                if 'Volume' in stock_df:
+                    valid_volume = stock_df['Volume'].dropna()
+                    if not valid_volume.empty:
+                        volume = int(valid_volume.iloc[-1])
                 
-                stock_data = {
-                    "symbol": symbol.replace('.NS', ''),
-                    "company_name": info.get('longName', info.get('shortName', symbol)),
-                    "current_price": round(current_price, 2),
-                    "change": round(change, 2),
-                    "change_percent": round(change_percent, 2),
-                    "volume": info.get('volume'),
-                    "market_cap": info.get('marketCap')
-                }
-                stocks_data.append(stock_data)
+                # Process New History Data
+                new_history = []
+                try:
+                    hist_df = stock_df[['Close']].dropna()
+                    for date, row in hist_df.iterrows():
+                        new_history.append({
+                            "date": date.strftime("%Y-%m-%d"),
+                            "price": round(float(row['Close']), 2)
+                        })
+                except Exception as h_err:
+                    logger.warning(f"Error processing history for {symbol}: {h_err}")
+                    new_history = []
+
+                # Update or Insert into DB
+                clean_symbol = symbol.replace('.NS', '')
+                
+                stmt = select(StockPrice).where(StockPrice.symbol == clean_symbol)
+                result = await db.execute(stmt)
+                stock_record = result.scalar_one_or_none()
+                
+                if stock_record:
+                    # MERGE LOGIC: Combine existing history with new history
+                    existing_history = stock_record.history or []
+                    
+                    # Convert to dict for easy merging (Date -> Price)
+                    # This automatically updates existing dates with new prices (handling corrections)
+                    history_dict = {item['date']: item['price'] for item in existing_history}
+                    
+                    for item in new_history:
+                        history_dict[item['date']] = item['price']
+                    
+                    # Convert back to list and sort by date
+                    merged_history = [
+                        {"date": date, "price": price}
+                        for date, price in history_dict.items()
+                    ]
+                    merged_history.sort(key=lambda x: x['date'])
+                    
+                    # Update record
+                    stock_record.current_price = current_price
+                    stock_record.change = change
+                    stock_record.change_percent = change_percent
+                    stock_record.volume = volume
+                    stock_record.history = merged_history
+                    stock_record.last_updated = datetime.utcnow()
+                else:
+                    new_stock = StockPrice(
+                        symbol=clean_symbol,
+                        current_price=current_price,
+                        change=change,
+                        change_percent=change_percent,
+                        volume=volume,
+                        history=new_history,
+                        last_updated=datetime.utcnow()
+                    )
+                    db.add(new_stock)
+                
+                updated_count += 1
                 
             except Exception as e:
-                logger.warning(f"Failed to fetch data for {symbol}: {e}")
-                failed_symbols.append(symbol)
+                logger.warning(f"Error processing {symbol}: {e}")
                 continue
         
-        if not stocks_data:
-            raise HTTPException(status_code=503, detail="Unable to fetch market data")
-        
-        # Return wrapped response matching frontend expectations
-        return {
-            "successful_fetches": len(stocks_data),
-            "total_stocks": len(NIFTY_50_SYMBOLS),
-            "stocks": stocks_data,
-            "failed_symbols": failed_symbols
-        }
+        await db.commit()
+        logger.info(f"Successfully updated {updated_count} NIFTY 50 stocks")
+        return updated_count
         
     except Exception as e:
-        logger.error(f"Error fetching NIFTY 50 data: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to fetch NIFTY 50 data: {str(e)}")
+        logger.error(f"Bulk fetch failed: {e}")
+        await db.rollback()
+        raise e
 
-
-@router.get("/live-indices")
-async def get_live_indices():
-    """Get live data for major Indian indices, global markets, and commodities"""
+async def fetch_and_store_indices(db: AsyncSession):
+    """Bulk fetch indices and store in DB (Incremental Update)"""
     try:
-        # Indian indices
-        indian_indices = {
+        indices_map = {
             "^NSEI": "NIFTY 50",
             "^BSESN": "SENSEX",
-            "^NSEBANK": "NIFTY BANK"
-            # Note: ^NSEIT is delisted, removed to prevent errors
-        }
-        
-        # Global indices
-        global_indices = {
+            "^NSEBANK": "NIFTY BANK",
             "^GSPC": "S&P 500",
             "^DJI": "Dow Jones",
             "^IXIC": "NASDAQ",
-            "^FTSE": "FTSE 100"
-        }
-        
-        # Commodities
-        commodities = {
             "GC=F": "Gold",
             "CL=F": "Crude Oil",
             "SI=F": "Silver",
             "BTC-USD": "Bitcoin"
         }
         
-        def fetch_indices(symbols_dict):
-            data = []
-            for symbol, name in symbols_dict.items():
-                try:
-                    ticker = yf.Ticker(symbol)
-                    hist = ticker.history(period="2d")
-                    
-                    if len(hist) >= 2:
-                        current_value = hist['Close'].iloc[-1]
-                        prev_value = hist['Close'].iloc[-2]
-                        change = current_value - prev_value
-                        change_percent = (change / prev_value) * 100
-                        
-                        index_data = {
-                            "name": name,
-                            "current_price": round(current_value, 2),
-                            "change": round(change, 2),
-                            "change_percent": round(change_percent, 2),
-                            "last_updated": datetime.now().isoformat()
-                        }
-                        data.append(index_data)
-                        
-                except Exception as e:
-                    logger.warning(f"Failed to fetch {name}: {e}")
+        logger.info("Fetching Indices data from Yahoo Finance (Bulk)...")
+        
+        # 1. Determine Start Date (Smart Gap Fill)
+        stmt = select(func.min(MarketIndex.last_updated))
+        result = await db.execute(stmt)
+        oldest_update = result.scalar()
+        
+        start_date = datetime.utcnow() - timedelta(days=30)
+        
+        if oldest_update:
+            oldest_update_naive = oldest_update.replace(tzinfo=None)
+            one_year_ago = datetime.utcnow() - timedelta(days=365)
+            if oldest_update_naive > one_year_ago:
+                start_date = oldest_update_naive - timedelta(days=1)
+        
+        logger.info(f"Fetching indices starting from: {start_date.date()}")
+        
+        tickers = " ".join(indices_map.keys())
+        data = yf.download(tickers, start=start_date.strftime("%Y-%m-%d"), interval="1d", group_by='ticker', progress=False, session=yf_session)
+        
+        for symbol, name in indices_map.items():
+            try:
+                if len(indices_map) > 1:
+                    idx_df = data[symbol]
+                else:
+                    idx_df = data
+                
+                if idx_df.empty:
                     continue
-            return data
+                    
+                # Get valid close prices
+                valid_closes = idx_df['Close'].dropna()
+                
+                if valid_closes.empty:
+                    continue
+                    
+                current_price = float(valid_closes.iloc[-1])
+                
+                if len(valid_closes) >= 2:
+                    prev_price = float(valid_closes.iloc[-2])
+                    change = current_price - prev_price
+                    change_percent = (change / prev_price) * 100
+                else:
+                    change = 0.0
+                    change_percent = 0.0
+                
+                # Process New History
+                new_history = []
+                try:
+                    hist_df = idx_df[['Close']].dropna()
+                    for date, row in hist_df.iterrows():
+                        new_history.append({
+                            "date": date.strftime("%Y-%m-%d"),
+                            "price": round(float(row['Close']), 2)
+                        })
+                except Exception as h_err:
+                    logger.warning(f"Error processing history for {symbol}: {h_err}")
+                    new_history = []
+
+                # Update DB
+                stmt = select(MarketIndex).where(MarketIndex.symbol == symbol)
+                result = await db.execute(stmt)
+                idx_record = result.scalar_one_or_none()
+                
+                if idx_record:
+                    # MERGE LOGIC
+                    existing_history = idx_record.history or []
+                    history_dict = {item['date']: item['price'] for item in existing_history}
+                    
+                    for item in new_history:
+                        history_dict[item['date']] = item['price']
+                    
+                    merged_history = [
+                        {"date": date, "price": price}
+                        for date, price in history_dict.items()
+                    ]
+                    merged_history.sort(key=lambda x: x['date'])
+                    
+                    idx_record.current_price = current_price
+                    idx_record.change = change
+                    idx_record.change_percent = change_percent
+                    idx_record.history = merged_history
+                    idx_record.last_updated = datetime.utcnow()
+                else:
+                    new_idx = MarketIndex(
+                        symbol=symbol,
+                        name=name,
+                        current_price=current_price,
+                        change=change,
+                        change_percent=change_percent,
+                        history=new_history,
+                        last_updated=datetime.utcnow()
+                    )
+                    db.add(new_idx)
+                    
+            except Exception as e:
+                logger.warning(f"Error processing index {symbol}: {e}")
+                continue
+                
+        await db.commit()
+        logger.info("Successfully updated indices")
         
-        indian_data = fetch_indices(indian_indices)
-        global_data = fetch_indices(global_indices)
-        commodities_data = fetch_indices(commodities)
+    except Exception as e:
+        logger.error(f"Indices bulk fetch failed: {e}")
+        await db.rollback()
+
+# ============= Market Data Endpoints =============
+
+@router.get("/nifty50-stocks")
+async def get_nifty50_stocks(db: AsyncSession = Depends(get_db)):
+    """Get NIFTY 50 stocks (Cached in DB)"""
+    try:
+        # 1. Check if we have fresh data in DB
+        stmt = select(StockPrice).limit(1)
+        result = await db.execute(stmt)
+        sample = result.scalar_one_or_none()
         
-        # Return structured response matching frontend expectations
+        is_stale = True
+        if sample:
+            # Check if data is less than 5 minutes old
+            # Note: sample.last_updated is timezone aware (UTC)
+            if sample.last_updated.replace(tzinfo=None) > datetime.utcnow() - timedelta(minutes=5):
+                is_stale = False
+        
+        # 2. If stale or empty, fetch fresh data
+        if is_stale:
+            await fetch_and_store_nifty50(db)
+            
+        # 3. Return data from DB
+        stmt = select(StockPrice)
+        result = await db.execute(stmt)
+        stocks = result.scalars().all()
+        
+        formatted_stocks = []
+        for stock in stocks:
+            formatted_stocks.append({
+                "symbol": stock.symbol,
+                "company_name": stock.symbol, # We can improve this with a mapping later
+                "current_price": stock.current_price,
+                "change": stock.change,
+                "change_percent": stock.change_percent,
+                "volume": stock.volume,
+                "market_cap": stock.market_cap
+            })
+            
         return {
-            "indian_markets": indian_data,
-            "global_markets": global_data,
-            "commodities": commodities_data
+            "successful_fetches": len(formatted_stocks),
+            "total_stocks": len(NIFTY_50_SYMBOLS),
+            "stocks": formatted_stocks,
+            "failed_symbols": []
         }
         
     except Exception as e:
-        logger.error(f"Error fetching indices: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to fetch indices: {str(e)}")
+        logger.error(f"Error in get_nifty50_stocks: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/live-indices")
+async def get_live_indices(db: AsyncSession = Depends(get_db)):
+    """Get live indices (Cached in DB)"""
+    try:
+        # 1. Check freshness
+        stmt = select(MarketIndex).limit(1)
+        result = await db.execute(stmt)
+        sample = result.scalar_one_or_none()
+        
+        is_stale = True
+        if sample:
+            if sample.last_updated.replace(tzinfo=None) > datetime.utcnow() - timedelta(minutes=1):
+                is_stale = False
+                
+        # 2. Update if stale
+        if is_stale:
+            await fetch_and_store_indices(db)
+            
+        # 3. Return from DB
+        stmt = select(MarketIndex)
+        result = await db.execute(stmt)
+        indices = result.scalars().all()
+        
+        # Group by category
+        indian_markets = []
+        global_markets = []
+        commodities = []
+        
+        indian_symbols = ["^NSEI", "^BSESN", "^NSEBANK"]
+        global_symbols = ["^GSPC", "^DJI", "^IXIC"]
+        commodity_symbols = ["GC=F", "CL=F", "SI=F", "BTC-USD"]
+        
+        for idx in indices:
+            data = {
+                "symbol": idx.symbol,
+                "name": idx.name,
+                "current_price": idx.current_price,
+                "change": idx.change,
+                "change_percent": idx.change_percent,
+                "history": idx.history,
+                "last_updated": idx.last_updated.isoformat()
+            }
+            
+            if idx.symbol in indian_symbols:
+                indian_markets.append(data)
+            elif idx.symbol in global_symbols:
+                global_markets.append(data)
+            elif idx.symbol in commodity_symbols:
+                commodities.append(data)
+                
+        return {
+            "indian_markets": indian_markets,
+            "global_markets": global_markets,
+            "commodities": commodities
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in get_live_indices: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/stocks", response_model=List[StockData])
@@ -193,6 +455,8 @@ async def get_stocks(
     cap: str = Query("large", description="Market cap: large, mid, small")
 ):
     """Get stocks by category (gainers/losers/active) and market cap"""
+    # For now, we'll just reuse the NIFTY 50 logic but filter it
+    # Ideally, this should also use the DB
     try:
         # Use NIFTY 50 as base for large cap
         if cap == "large":

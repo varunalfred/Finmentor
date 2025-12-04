@@ -1,14 +1,25 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useStockSearch } from '../../hooks/useStockSearch';
 import './StockSearch.css';
 
 const StockSearch = () => {
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [debouncedQuery, setDebouncedQuery] = useState('');
   const [showDropdown, setShowDropdown] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const searchRef = useRef(null);
-  const debounceTimer = useRef(null);
+
+  // Debounce the query input
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedQuery(query);
+    }, 300); // 300ms debounce
+
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  // Use the React Query hook with the debounced query
+  const { data: results = [], isLoading: loading } = useStockSearch(debouncedQuery);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -22,48 +33,21 @@ const StockSearch = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Search function with debounce
-  const performSearch = async (searchQuery) => {
-    if (!searchQuery.trim()) {
-      setResults([]);
-      setShowDropdown(false);
-      return;
-    }
-
-    try {
-      setLoading(true);
-      const response = await fetch(`/api/market/search?query=${encodeURIComponent(searchQuery)}`);
-      
-      if (!response.ok) {
-        throw new Error('Search failed');
-      }
-
-      const data = await response.json();
-      setResults(data.results || []);
+  // Show dropdown when results are available
+  useEffect(() => {
+    if (results.length > 0 && query.trim()) {
       setShowDropdown(true);
-      setSelectedIndex(-1);
-    } catch (error) {
-      console.error('Search error:', error);
-      setResults([]);
-    } finally {
-      setLoading(false);
+    } else if (!query.trim()) {
+      setShowDropdown(false);
     }
-  };
+  }, [results, query]);
 
-  // Handle input change with debounce
+  // Handle input change
   const handleInputChange = (e) => {
-    const value = e.target.value;
-    setQuery(value);
-
-    // Clear previous timer
-    if (debounceTimer.current) {
-      clearTimeout(debounceTimer.current);
+    setQuery(e.target.value);
+    if (!e.target.value.trim()) {
+      setShowDropdown(false);
     }
-
-    // Set new timer
-    debounceTimer.current = setTimeout(() => {
-      performSearch(value);
-    }, 300); // 300ms debounce
   };
 
   // Handle keyboard navigation
@@ -73,7 +57,7 @@ const StockSearch = () => {
     switch (e.key) {
       case 'ArrowDown':
         e.preventDefault();
-        setSelectedIndex((prev) => 
+        setSelectedIndex((prev) =>
           prev < results.length - 1 ? prev + 1 : prev
         );
         break;
@@ -103,15 +87,12 @@ const StockSearch = () => {
     setQuery(result.symbol);
     setShowDropdown(false);
     setSelectedIndex(-1);
-    
-    // You can emit an event or callback here
-    // For now, just logging
   };
 
   // Clear search
   const handleClear = () => {
     setQuery('');
-    setResults([]);
+    setDebouncedQuery('');
     setShowDropdown(false);
     setSelectedIndex(-1);
   };
@@ -163,7 +144,7 @@ const StockSearch = () => {
               {results.map((result, index) => {
                 const isPositive = result.change_percent >= 0;
                 const isSelected = index === selectedIndex;
-                
+
                 return (
                   <li
                     key={`${result.symbol}-${index}`}
@@ -173,8 +154,8 @@ const StockSearch = () => {
                   >
                     <div className="result-left">
                       <div className="result-icon">
-                        {result.type === 'commodity' ? '💎' : 
-                         result.type === 'index' ? '📊' : '📈'}
+                        {result.type === 'commodity' ? '💎' :
+                          result.type === 'index' ? '📊' : '📈'}
                       </div>
                       <div className="result-info">
                         <div className="result-name">{result.name}</div>

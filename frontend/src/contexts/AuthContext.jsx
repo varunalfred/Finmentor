@@ -13,100 +13,113 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
 
-  // Initialize auth state on mount
+  // Initialize auth state on mount - OPTIMIZED for performance
   useEffect(() => {
     const initAuth = async () => {
       try {
-        if (api.isAuthenticated()) {
-          const storedUser = api.getStoredUser();
-          
-          // Verify token is still valid by fetching current user
-          const result = await api.getCurrentUser();
-          if (result.success) {
-            setUser(result.data);
-            setIsAuthenticated(true);
-          } else {
-            // Token invalid, clear auth
-            api.logout();
-            setUser(null);
-            setIsAuthenticated(false);
-          }
+        // ✅ Use stored data immediately (no blocking)
+        const storedUser = api.getStoredUser();
+        if (storedUser && api.isAuthenticated()) {
+          setUser(storedUser);
+          setIsAuthenticated(true);
+          setLoading(false);  // ✅ Unblock immediately
+
+          // ✅ Verify token in background (non-blocking)
+          api.getCurrentUser().then(result => {
+            if (result.success) {
+              // Update with fresh data from server
+              setUser(result.data);
+              localStorage.setItem('user', JSON.stringify(result.data));
+            } else {
+              // Token expired, logout
+              console.warn('Token verification failed, logging out');
+              api.logout();
+              setUser(null);
+              setIsAuthenticated(false);
+            }
+          }).catch(error => {
+            console.error('Background auth verification failed:', error);
+            // Don't logout on network errors, keep using cached data
+          });
+        } else {
+          // No stored user or token
+          setLoading(false);
         }
       } catch (error) {
         console.error('Auth initialization error:', error);
         setUser(null);
         setIsAuthenticated(false);
       } finally {
-        setLoading(false);
+          setLoading(false);
+        }
+      };
+
+      initAuth();
+    }, []);
+
+    const login = async (username, password) => {
+      try {
+        const result = await api.login(username, password);
+        if (result.success) {
+          const userResult = await api.getCurrentUser();
+          if (userResult.success) {
+            setUser(userResult.data);
+            setIsAuthenticated(true);
+          }
+        }
+        return result;
+      } catch (error) {
+        return {
+          success: false,
+          error: error.message
+        };
       }
     };
 
-    initAuth();
-  }, []);
-
-  const login = async (username, password) => {
-    try {
-      const result = await api.login(username, password);
-      if (result.success) {
-        const userResult = await api.getCurrentUser();
-        if (userResult.success) {
-          setUser(userResult.data);
-          setIsAuthenticated(true);
+    const register = async (userData) => {
+      try {
+        const result = await api.register(userData);
+        if (result.success) {
+          // After registration, log in automatically
+          const loginResult = await login(userData.username, userData.password);
+          return loginResult;
         }
+        return result;
+      } catch (error) {
+        return {
+          success: false,
+          error: error.message
+        };
       }
-      return result;
-    } catch (error) {
-      return {
-        success: false,
-        error: error.message
-      };
-    }
-  };
+    };
 
-  const register = async (userData) => {
-    try {
-      const result = await api.register(userData);
-      if (result.success) {
-        // After registration, log in automatically
-        const loginResult = await login(userData.username, userData.password);
-        return loginResult;
-      }
-      return result;
-    } catch (error) {
-      return {
-        success: false,
-        error: error.message
-      };
-    }
-  };
+    const logout = () => {
+      api.logout();
+      setUser(null);
+      setIsAuthenticated(false);
+    };
 
-  const logout = () => {
-    api.logout();
-    setUser(null);
-    setIsAuthenticated(false);
-  };
+    const updateUser = (userData) => {
+      setUser(prev => ({ ...prev, ...userData }));
+      localStorage.setItem('user', JSON.stringify({ ...user, ...userData }));
+    };
 
-  const updateUser = (userData) => {
-    setUser(prev => ({ ...prev, ...userData }));
-    localStorage.setItem('user', JSON.stringify({ ...user, ...userData }));
-  };
+    const value = {
+      user,
+      loading,
+      isAuthenticated,
+      login,
+      register,
+      logout,
+      updateUser
+    };
 
-  const value = {
-    user,
-    loading,
-    isAuthenticated,
-    login,
-    register,
-    logout,
-    updateUser
+    return (
+      <AuthContext.Provider value={value}>
+        {children}  {/* ✅ No blocking - render immediately */}
+      </AuthContext.Provider>
+    );
   };
-
-  return (
-    <AuthContext.Provider value={value}>
-      {!loading && children}
-    </AuthContext.Provider>
-  );
-};
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
@@ -116,4 +129,4 @@ export const useAuth = () => {
   return context;
 };
 
-export default AuthContext;
+  export default AuthContext;

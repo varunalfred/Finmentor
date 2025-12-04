@@ -1,16 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useLiveIndices } from '../../hooks/useLiveIndices';
 import './LiveMarketIndicators.css';
 
 const LiveMarketIndicators = () => {
   const [currentSlide, setCurrentSlide] = useState(0);
-  const [marketData, setMarketData] = useState({
-    indian_markets: [],
-    global_markets: [],
-    commodities: []
-  });
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
   const intervalRef = useRef(null);
+
+  // Use the existing hook for data fetching
+  const { data: marketData, isLoading: loading, error } = useLiveIndices();
 
   // Slide configuration - 4 indices per slide
   const slides = [
@@ -31,32 +28,6 @@ const LiveMarketIndicators = () => {
     }
   ];
 
-  // Fetch market data
-  const fetchMarketData = async () => {
-    try {
-      const response = await fetch('/api/market/live-indices');
-      if (!response.ok) {
-        throw new Error('Failed to fetch market data');
-      }
-      const data = await response.json();
-      setMarketData(data);
-      setError(null);
-    } catch (err) {
-      console.error('Error fetching market data:', err);
-      setError('Unable to load market data');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Initial data load
-  useEffect(() => {
-    fetchMarketData();
-    // Auto-refresh every 30 seconds
-    const refreshInterval = setInterval(fetchMarketData, 30000);
-    return () => clearInterval(refreshInterval);
-  }, []);
-
   // Auto-rotate carousel every 5 seconds
   useEffect(() => {
     intervalRef.current = setInterval(() => {
@@ -72,25 +43,25 @@ const LiveMarketIndicators = () => {
 
   const formatValue = (value) => {
     if (value >= 1000) {
-      return value.toLocaleString('en-IN', { 
-        minimumFractionDigits: 2, 
-        maximumFractionDigits: 2 
+      return value.toLocaleString('en-IN', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
       });
     }
-    return value.toFixed(2);
+    return value?.toFixed(2) || '0.00';
   };
 
   const formatChange = (change) => {
-    const formatted = Math.abs(change).toFixed(2);
+    const formatted = Math.abs(change || 0).toFixed(2);
     return change >= 0 ? `+${formatted}` : `-${formatted}`;
   };
 
   const formatChangePercent = (percent) => {
-    const formatted = Math.abs(percent).toFixed(2);
+    const formatted = Math.abs(percent || 0).toFixed(2);
     return percent >= 0 ? `+${formatted}%` : `-${formatted}%`;
   };
 
-  if (loading) {
+  if (loading && !marketData) {
     return (
       <div className="live-market-indicators">
         <h3 className="market-title">Live Market</h3>
@@ -112,15 +83,14 @@ const LiveMarketIndicators = () => {
       <div className="live-market-indicators">
         <h3 className="market-title">Live Market</h3>
         <div className="market-error">
-          <p>{error}</p>
-          <button onClick={fetchMarketData} className="retry-btn">Retry</button>
+          <p>Unable to load market data</p>
         </div>
       </div>
     );
   }
 
   const currentSlideData = slides[currentSlide];
-  const currentIndices = marketData[currentSlideData.key] || [];
+  const currentIndices = marketData?.[currentSlideData.key] || [];
 
   return (
     <div className="live-market-indicators">
@@ -136,11 +106,11 @@ const LiveMarketIndicators = () => {
           ))}
         </div>
       </div>
-      
+
       <div className="market-grid">
         {currentIndices.map((market, index) => {
           const isPositive = market.change >= 0;
-          
+
           return (
             <div key={index} className="market-index-card">
               <div className="index-name">{market.name}</div>

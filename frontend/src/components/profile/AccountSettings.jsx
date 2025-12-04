@@ -1,56 +1,35 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { useAuth } from '../../contexts/AuthContext';
 import './AccountSettings.css';
 
+// API Base URL - uses environment variable or defaults to localhost
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+
 const AccountSettings = () => {
+  const { user, updateUser } = useAuth(); // ✅ Use AuthContext for initial data
+
   const [profile, setProfile] = useState({
-    full_name: '',
-    email: '',
-    phone: '',
-    date_of_birth: '',
-    location: '',
-    country: '',
-    bio: ''
+    username: user?.username || '',
+    email: user?.email || '',
+    full_name: user?.full_name || '',
+    age: user?.age || '',
+    user_type: user?.user_type || 'beginner',
+    education_level: (user?.education_level && user.education_level !== 'None') ? user.education_level : '',
+    risk_tolerance: user?.risk_tolerance || 'moderate',
+    financial_goals: user?.financial_goals || [],
+    preferred_language: user?.preferred_language || 'en',
+    preferred_output: user?.preferred_output || 'text'
   });
+
   const [passwords, setPasswords] = useState({
     current_password: '',
     new_password: '',
     confirm_password: ''
   });
-  const [loading, setLoading] = useState(true);
+
+  const [loading, setLoading] = useState(false); // ✅ No initial load needed
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
-
-  useEffect(() => {
-    fetchProfile();
-  }, []);
-
-  const fetchProfile = async () => {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:8000/api/profile', {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setProfile({
-          full_name: data.full_name || '',
-          email: data.email || '',
-          phone: data.phone || '',
-          date_of_birth: data.date_of_birth || '',
-          location: data.location || '',
-          country: data.country || '',
-          bio: data.bio || ''
-        });
-      }
-    } catch (error) {
-      console.error('Error fetching profile:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleProfileChange = (e) => {
     setProfile({
@@ -72,8 +51,8 @@ const AccountSettings = () => {
     setMessage({ type: '', text: '' });
 
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:8000/api/profile', {
+      const token = localStorage.getItem('access_token');
+      const response = await fetch(`${API_BASE_URL}/api/profile`, {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -116,8 +95,8 @@ const AccountSettings = () => {
     }
 
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:8000/api/profile/change-password', {
+      const token = localStorage.getItem('access_token');
+      const response = await fetch(`${API_BASE_URL}/api/profile/change-password`, {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -164,7 +143,7 @@ const AccountSettings = () => {
       )}
 
       <div className="settings-section">
-        <h2>Profile Information</h2>
+        <h2>Profile Details</h2>
         <form onSubmit={handleSaveProfile}>
           <div className="form-grid">
             <div className="form-group">
@@ -194,63 +173,142 @@ const AccountSettings = () => {
             </div>
 
             <div className="form-group">
-              <label htmlFor="phone">Phone</label>
+              <label htmlFor="age">Age</label>
               <input
-                type="tel"
-                id="phone"
-                name="phone"
-                value={profile.phone}
+                type="number"
+                id="age"
+                name="age"
+                value={profile.age}
                 onChange={handleProfileChange}
-                placeholder="+1 (555) 123-4567"
+                placeholder="Age"
+                min="18"
+                max="120"
               />
             </div>
 
             <div className="form-group">
-              <label htmlFor="date_of_birth">Date of Birth</label>
-              <input
-                type="date"
-                id="date_of_birth"
-                name="date_of_birth"
-                value={profile.date_of_birth}
+              <label htmlFor="education_level">Education Level</label>
+              <select
+                id="education_level"
+                name="education_level"
+                value={profile.education_level}
                 onChange={handleProfileChange}
-              />
+              >
+                <option value="">Not Specified</option>
+                <option value="high_school">High School</option>
+                <option value="bachelors">Bachelor's Degree</option>
+                <option value="masters">Master's Degree</option>
+                <option value="phd">PhD / Doctorate</option>
+                <option value="other">Other</option>
+              </select>
             </div>
 
             <div className="form-group">
-              <label htmlFor="location">Location</label>
-              <input
-                type="text"
-                id="location"
-                name="location"
-                value={profile.location}
+              <label htmlFor="user_type">Financial Knowledge Level</label>
+              <select
+                id="user_type"
+                name="user_type"
+                value={profile.user_type}
                 onChange={handleProfileChange}
-                placeholder="City, State"
-              />
+              >
+                <option value="beginner">Beginner (Savings & Budgeting)</option>
+                <option value="intermediate">Intermediate (Stocks & Bonds)</option>
+                <option value="advanced">Advanced (Derivatives & Analysis)</option>
+                <option value="expert">Expert (Financial Modeling)</option>
+              </select>
             </div>
 
             <div className="form-group">
-              <label htmlFor="country">Country</label>
-              <input
-                type="text"
-                id="country"
-                name="country"
-                value={profile.country}
+              <label htmlFor="risk_tolerance">Risk Tolerance</label>
+              <select
+                id="risk_tolerance"
+                name="risk_tolerance"
+                value={profile.risk_tolerance}
                 onChange={handleProfileChange}
-                placeholder="Country"
-              />
+              >
+                <option value="low">Low (Conservative)</option>
+                <option value="moderate">Moderate (Balanced)</option>
+                <option value="high">High (Aggressive)</option>
+              </select>
             </div>
-          </div>
 
-          <div className="form-group full-width">
-            <label htmlFor="bio">Bio</label>
-            <textarea
-              id="bio"
-              name="bio"
-              value={profile.bio}
-              onChange={handleProfileChange}
-              placeholder="Tell us about yourself..."
-              rows="4"
-            />
+            <div className="form-group">
+              <label htmlFor="preferred_language">Preferred Language</label>
+              <select
+                id="preferred_language"
+                name="preferred_language"
+                value={profile.preferred_language || 'en'}
+                onChange={handleProfileChange}
+              >
+                <option value="en">English</option>
+                <option value="es">Spanish</option>
+                <option value="fr">French</option>
+                <option value="de">German</option>
+                <option value="hi">Hindi</option>
+                <option value="zh">Chinese</option>
+              </select>
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="preferred_output">Preferred Output Format</label>
+              <select
+                id="preferred_output"
+                name="preferred_output"
+                value={profile.preferred_output || 'text'}
+                onChange={handleProfileChange}
+              >
+                <option value="text">Text Only</option>
+                <option value="visual">Visual (Charts & Graphs)</option>
+                <option value="voice">Voice / Audio</option>
+              </select>
+            </div>
+
+            <div className="form-group full-width">
+              <label>Financial Goals</label>
+              <div className="checkbox-group">
+                {['Retirement', 'Home Purchase', 'Education', 'Wealth Building', 'Travel', 'Emergency Fund'].map(goal => (
+                  <label key={goal} className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={profile.financial_goals?.includes(goal)}
+                      onChange={(e) => {
+                        const currentGoals = profile.financial_goals || [];
+                        let newGoals;
+                        if (e.target.checked) {
+                          newGoals = [...currentGoals, goal];
+                        } else {
+                          newGoals = currentGoals.filter(g => g !== goal);
+                        }
+                        setProfile({ ...profile, financial_goals: newGoals });
+                      }}
+                    />
+                    {goal}
+                  </label>
+                ))}
+              </div>
+
+              {/* Custom Goal Input */}
+              <div className="custom-goal-input">
+                <input
+                  type="text"
+                  placeholder="Add custom goal..."
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      const value = e.target.value.trim();
+                      if (value && !profile.financial_goals?.includes(value)) {
+                        setProfile({
+                          ...profile,
+                          financial_goals: [...(profile.financial_goals || []), value]
+                        });
+                        e.target.value = '';
+                      }
+                    }
+                  }}
+                />
+                <small>Press Enter to add</small>
+              </div>
+            </div>
           </div>
 
           <div className="form-actions">

@@ -1,13 +1,18 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { useActivity } from '../../hooks/useApi';
 import './ActivitySection.css';
 
+// API Base URL - uses environment variable or defaults to localhost
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+
 const ActivitySection = () => {
-  const [activities, setActivities] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
   const [filter, setFilter] = useState('all');
-  const [dataFetched, setDataFetched] = useState(false);
+
+  // ✅ Use React Query hook - automatic caching with pagination
+  const { data, isLoading } = useActivity(page, filter);
+  const activities = data?.activities || [];
+  const total = data?.total || 0;
 
   const activityTypes = {
     watchlist_add: { icon: '📌', label: 'Added to Watchlist', color: '#48bb78' },
@@ -20,46 +25,13 @@ const ActivitySection = () => {
     password_change: { icon: '🔑', label: 'Password Changed', color: '#f56565' }
   };
 
-  useEffect(() => {
-    // Only fetch when component first mounts or filter/page changes
-    if (!dataFetched || page !== 1 || filter !== 'all') {
-      fetchActivities();
-      setDataFetched(true);
-    }
-  }, [page, filter]);
-
-  const fetchActivities = async () => {
-    try {
-      const token = localStorage.getItem('token');
-      let url = `http://localhost:8000/api/profile/activity?page=${page}&page_size=20`;
-      if (filter !== 'all') {
-        url += `&activity_type=${filter}`;
-      }
-
-      const response = await fetch(url, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setActivities(data.activities);
-        setTotal(data.total);
-      }
-      setLoading(false);
-    } catch (error) {
-      console.error('Error fetching activities:', error);
-      setLoading(false);
-    }
-  };
 
   const handleClearHistory = async () => {
     if (!confirm('Clear all activity history? This cannot be undone.')) return;
 
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:8000/api/profile/activity', {
+      const token = localStorage.getItem('access_token');
+      const response = await fetch(`${API_BASE_URL}/api/profile/activity`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -90,15 +62,14 @@ const ActivitySection = () => {
     return date.toLocaleDateString();
   };
 
-  if (loading) {
+  if (isLoading) {
     return <div className="activity-loading"><div className="spinner"></div></div>;
   }
 
   return (
     <div className="activity-section">
-      <div className="activity-header">
-        <h2>Activity History</h2>
-        <div className="activity-actions">
+      <div className="activity-controls">
+        <div className="activity-filter-container">
           <select
             className="filter-select"
             value={filter}
@@ -112,7 +83,9 @@ const ActivitySection = () => {
             <option value="login">Login History</option>
             <option value="settings_change">Settings Changes</option>
           </select>
-          
+        </div>
+
+        <div className="activity-actions">
           <button className="clear-btn" onClick={handleClearHistory}>
             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -123,7 +96,7 @@ const ActivitySection = () => {
       </div>
 
       {activities.length === 0 ? (
-        <div className="empty-activities">
+        <div className="empty-state">
           <svg className="empty-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>

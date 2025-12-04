@@ -52,9 +52,11 @@ class UserResponse(BaseModel):
     email: str
     username: str
     full_name: Optional[str]
+    age: Optional[int] = None  # ✅ Added for complete profile data
     user_type: str
     education_level: str
     risk_tolerance: str
+    financial_goals: Optional[list] = None  # ✅ Added for complete profile data
     is_premium: bool
     created_at: datetime
 
@@ -199,9 +201,11 @@ async def get_current_user(
             email=user.email,
             username=user.username,
             full_name=user.full_name,
+            age=user.age,  # ✅ Include age
             user_type=user.user_type,
             education_level=user.education_level,
             risk_tolerance=user.risk_tolerance,
+            financial_goals=user.financial_goals or [],  # ✅ Include financial goals
             is_premium=user.is_premium,
             created_at=user.created_at
         )

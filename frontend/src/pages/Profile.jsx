@@ -1,61 +1,35 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';  // ✅ Import useAuth
 import './Profile.css';
 
-// Lazy load tab components to prevent all from mounting at once
-const WatchlistSection = lazy(() => import('../components/profile/WatchlistSection'));
-const ActivitySection = lazy(() => import('../components/profile/ActivitySection'));
-const AccountSettings = lazy(() => import('../components/profile/AccountSettings'));
-const PreferencesSection = lazy(() => import('../components/profile/PreferencesSection'));
+// API Base URL - uses environment variable or defaults to localhost
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+
+// Import components directly
+import WatchlistSection from '../components/profile/WatchlistSection';
+import ActivitySection from '../components/profile/ActivitySection';
+import AccountSettings from '../components/profile/AccountSettings';
 
 const Profile = () => {
   const navigate = useNavigate();
+  const { user, loading: authLoading } = useAuth();  // ✅ Use AuthContext
   const [activeTab, setActiveTab] = useState('watchlist');
-  const [profile, setProfile] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [theme, setTheme] = useState('light');
 
-  // Fetch profile data
+  // ✅ Use AuthContext data directly
+  const profile = user;
+  const loading = authLoading;
+
+  // ✅ Redirect if no user (not logged in)
   useEffect(() => {
-    fetchProfile();
-  }, []);
-
-  const fetchProfile = async () => {
-    try {
-      const token = localStorage.getItem('token');
-      if (!token) {
-        navigate('/signup');
-        return;
-      }
-
-      const response = await fetch('http://localhost:8000/api/profile', {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch profile');
-      }
-
-      const data = await response.json();
-      setProfile(data);
-      setLoading(false);
-    } catch (error) {
-      console.error('Error fetching profile:', error);
-      setLoading(false);
+    if (!authLoading && !user) {
+      navigate('/login');
     }
-  };
+  }, [user, authLoading, navigate]);
 
   const handleLogout = () => {
-    localStorage.removeItem('token');
+    localStorage.removeItem('access_token');
     navigate('/signup');
-  };
-
-  const handleThemeToggle = () => {
-    const newTheme = theme === 'light' ? 'dark' : 'light';
-    setTheme(newTheme);
-    document.documentElement.setAttribute('data-theme', newTheme);
   };
 
   const handleAvatarUpload = async (event) => {
@@ -66,8 +40,8 @@ const Profile = () => {
     formData.append('file', file);
 
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:8000/api/profile/upload-avatar', {
+      const token = localStorage.getItem('access_token');
+      const response = await fetch(`${API_BASE_URL}/api/profile/upload-avatar`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -76,8 +50,9 @@ const Profile = () => {
       });
 
       if (response.ok) {
-        const data = await response.json();
-        setProfile({ ...profile, profile_picture_url: data.url });
+        // Ideally update context here, but for now we rely on reload or internal state if needed
+        // Since we use AuthContext, we might need a way to refresh user data
+        window.location.reload();
       }
     } catch (error) {
       console.error('Error uploading avatar:', error);
@@ -113,7 +88,7 @@ const Profile = () => {
             <div className="avatar-wrapper">
               {profile?.profile_picture_url ? (
                 <img
-                  src={`http://localhost:8000${profile.profile_picture_url}`}
+                  src={`${API_BASE_URL}${profile.profile_picture_url}`}
                   alt="Profile"
                   className="avatar-image"
                 />
@@ -201,21 +176,6 @@ const Profile = () => {
               Logout
             </button>
           </div>
-
-          {/* Theme Toggle */}
-          <div className="theme-toggle">
-            <label className="toggle-label">
-              <span>Dark Mode</span>
-              <div className="toggle-switch">
-                <input
-                  type="checkbox"
-                  checked={theme === 'dark'}
-                  onChange={handleThemeToggle}
-                />
-                <span className="toggle-slider"></span>
-              </div>
-            </label>
-          </div>
         </div>
       </aside>
 
@@ -271,36 +231,20 @@ const Profile = () => {
                 d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
               />
             </svg>
-            Settings
+            Profile Details
           </button>
 
-          <button
-            className={`tab-btn ${activeTab === 'preferences' ? 'active' : ''}`}
-            onClick={() => setActiveTab('preferences')}
-          >
-            <svg className="tab-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"
-              />
-            </svg>
-            Preferences
-          </button>
+
         </nav>
 
         {/* Tab Content */}
         <div className="tab-content">
-          <Suspense fallback={<div className="tab-loading"><div className="spinner"></div></div>}>
-            {activeTab === 'watchlist' && <WatchlistSection />}
-            {activeTab === 'activity' && <ActivitySection />}
-            {activeTab === 'settings' && <AccountSettings profile={profile} onUpdate={fetchProfile} />}
-            {activeTab === 'preferences' && <PreferencesSection />}
-          </Suspense>
+          {activeTab === 'watchlist' && <WatchlistSection />}
+          {activeTab === 'activity' && <ActivitySection />}
+          {activeTab === 'settings' && <AccountSettings />}
         </div>
       </main>
-    </div>
+    </div >
   );
 };
 

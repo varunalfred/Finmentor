@@ -14,7 +14,7 @@ const apiClient = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-  timeout: 30000, // 30 seconds
+  timeout: 10000, // ✅ Reduced to 10 seconds for better UX
 });
 
 // Request interceptor - Add auth token to requests
@@ -31,33 +31,97 @@ apiClient.interceptors.request.use(
   }
 );
 
-// Response interceptor - Handle common errors
+// Response interceptor - Handle common errors and automatic token refresh
+let isRefreshing = false;
+let failedQueue = [];
+
+const processQueue = (error, token = null) => {
+  failedQueue.forEach(prom => {
+    if (error) {
+      prom.reject(error);
+    } else {
+      prom.resolve(token);
+    }
+  });
+  failedQueue = [];
+};
+
 apiClient.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
+    const originalRequest = error.config;
+
     if (error.response) {
-      // Handle 401 Unauthorized - redirect to login
-      if (error.response.status === 401) {
-        localStorage.removeItem('access_token');
-        localStorage.removeItem('user');
-        window.location.href = '/signup';
+      // Handle 401 Unauthorized - Try to refresh token
+      if (error.response.status === 401 && !originalRequest._retry) {
+        if (isRefreshing) {
+          // If already refreshing, queue this request
+          return new Promise((resolve, reject) => {
+            failedQueue.push({ resolve, reject });
+          })
+            .then(token => {
+              originalRequest.headers.Authorization = `Bearer ${token}`;
+              return apiClient(originalRequest);
+            })
+            .catch(err => Promise.reject(err));
+        }
+
+        originalRequest._retry = true;
+        isRefreshing = true;
+
+        try {
+          // Attempt to refresh token
+          const token = localStorage.getItem('access_token');
+          if (!token) {
+            throw new Error('No token to refresh');
+          }
+
+          const response = await axios.post(
+            `${API_BASE_URL}/auth/refresh`,
+            {},
+            {
+              headers: { Authorization: `Bearer ${token}` }
+            }
+          );
+
+          const { access_token } = response.data;
+          localStorage.setItem('access_token', access_token);
+
+          // Process queued requests with new token
+          processQueue(null, access_token);
+
+          // Retry the original request with new token
+          originalRequest.headers.Authorization = `Bearer ${access_token}`;
+          return apiClient(originalRequest);
+
+        } catch (refreshError) {
+          // Refresh failed - logout user
+          processQueue(refreshError, null);
+          localStorage.removeItem('access_token');
+          localStorage.removeItem('user');
+          window.location.href = '/signup';
+          return Promise.reject(refreshError);
+        } finally {
+          isRefreshing = false;
+        }
       }
-      
+
       // Extract error message
       const message = error.response.data?.detail || error.response.data?.message || 'An error occurred';
       return Promise.reject(new Error(message));
     }
-    
+
     // Network error
     return Promise.reject(new Error('Network error. Please check your connection.'));
   }
 );
 
+
 // ============= API Service Object =============
 
 const api = {
   // ============= Authentication =============
-  
+
   /**
    * Register a new user
    */
@@ -124,6 +188,34 @@ const api = {
   },
 
   /**
+   * Manually refresh access token
+   * Can be called proactively to renew token before it expires
+   */
+  refreshToken: async () => {
+    try {
+      const token = localStorage.getItem('access_token');
+      if (!token) {
+        throw new Error('No token available');
+      }
+
+      const response = await apiClient.post('/auth/refresh');
+      const { access_token } = response.data;
+
+      localStorage.setItem('access_token', access_token);
+
+      return {
+        success: true,
+        data: { access_token }
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  },
+
+  /**
    * Get current user profile
    */
   getCurrentUser: async () => {
@@ -165,7 +257,7 @@ const api = {
    * @param {object} userProfile - Optional user profile override
    * @param {string} inputType - Type of input (text, voice, image, document)
    */
-  sendChatMessage: async (message, conversationId = null, userProfile = null, inputType = 'text') => {
+  sendChatMessage: async (message, conversationId = null, userProfile = null, inputType = 'text', documentId = null) => {
     try {
       const storedUser = api.getStoredUser();
       const profile = userProfile || {
@@ -178,12 +270,47 @@ const api = {
         ...(conversationId && { conversation_id: conversationId })
       };
 
-      const response = await apiClient.post('/chat', {
+      const payload = {
         message,
         input_type: inputType,
         user_profile: profile
-      });
+      };
 
+      // If documentId is provided, add it to context or metadata
+      // Note: The backend chat endpoint needs to be updated to accept document_id directly
+      // or we pass it as part of the message context
+      if (documentId) {
+        payload.context = { document_id: documentId };
+        // Also append to message for clarity if needed, or backend handles it
+      }
+
+      const response = await apiClient.post('/chat', payload);
+
+      return {
+        success: true,
+        data: response.data
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  },
+
+  /**
+   * Upload a document for background processing
+   * @param {string} base64Data - Base64 encoded file data
+   * @param {string} filename - Original filename
+   * @param {string} conversationId - Optional conversation ID
+   */
+  uploadDocument: async (base64Data, filename, conversationId = null) => {
+    try {
+      const response = await apiClient.post('/chat/upload', {
+        document_data: base64Data,
+        filename,
+        conversation_id: conversationId
+      });
       return {
         success: true,
         data: response.data
@@ -336,27 +463,6 @@ const api = {
     }
   },
 
-  /**
-   * Search knowledge base
-   */
-  searchKnowledgeBase: async (query, limit = 5) => {
-    try {
-      const response = await apiClient.post('/rag/search', {
-        query,
-        limit
-      });
-      return {
-        success: true,
-        data: response.data
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: error.message
-      };
-    }
-  },
-
   // ============= Profile / User Data =============
 
   /**
@@ -365,7 +471,7 @@ const api = {
   updateProfile: async (profileData) => {
     try {
       const response = await apiClient.put('/auth/profile', profileData);
-      
+
       // Update stored user
       const updatedUser = { ...api.getStoredUser(), ...response.data };
       localStorage.setItem('user', JSON.stringify(updatedUser));

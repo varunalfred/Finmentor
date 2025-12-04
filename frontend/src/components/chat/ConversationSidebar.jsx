@@ -1,22 +1,30 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useConversations, useDeleteConversation } from '../../hooks/useApi';
 import { ConversationSkeleton } from '../common/Skeletons';
 import ConversationAnalytics from './ConversationAnalytics';
 import './ConversationSidebar.css';
 
-const ConversationSidebar = ({ 
-  currentConversationId, 
-  onSelectConversation, 
+const ConversationSidebar = ({
+  currentConversationId,
+  onSelectConversation,
   onNewConversation,
   isOpen,
-  onClose 
+  onClose,
+  onRefreshReady // Callback to pass refetch function to parent
 }) => {
   const [showAnalytics, setShowAnalytics] = useState(false);
   const { data, isLoading, error, refetch } = useConversations(50, 0);
   const deleteConversationMutation = useDeleteConversation();
 
   const conversations = data?.data?.conversations || [];
+
+  // Pass refetch function to parent component for auto-refresh
+  useEffect(() => {
+    if (onRefreshReady && refetch) {
+      onRefreshReady(refetch);
+    }
+  }, [onRefreshReady, refetch]);
 
   const handleSelectConversation = (conversation) => {
     onSelectConversation(conversation);
@@ -27,7 +35,7 @@ const ConversationSidebar = ({
 
   const handleDeleteConversation = async (e, conversationId) => {
     e.stopPropagation(); // Prevent triggering conversation select
-    
+
     if (!window.confirm('Delete this conversation?')) {
       return;
     }
@@ -56,7 +64,7 @@ const ConversationSidebar = ({
     if (diffMins < 60) return `${diffMins}m ago`;
     if (diffHours < 24) return `${diffHours}h ago`;
     if (diffDays < 7) return `${diffDays}d ago`;
-    
+
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
 
@@ -64,7 +72,7 @@ const ConversationSidebar = ({
     <div className={`conversation-sidebar ${isOpen ? 'open' : ''}`}>
       <div className="sidebar-header">
         <h3>Conversations</h3>
-        <button 
+        <button
           className="close-sidebar-btn"
           onClick={onClose}
           aria-label="Close sidebar"
@@ -74,8 +82,8 @@ const ConversationSidebar = ({
       </div>
 
       <div className="sidebar-actions">
-        <button 
-          className="new-conversation-btn-sidebar" 
+        <button
+          className="new-conversation-btn-sidebar"
           onClick={() => {
             onNewConversation();
             if (window.innerWidth < 768) onClose();
@@ -83,7 +91,7 @@ const ConversationSidebar = ({
         >
           + New Conversation
         </button>
-        
+
         {conversations.length > 0 && (
           <button
             className="analytics-toggle-btn"
