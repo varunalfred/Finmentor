@@ -122,59 +122,72 @@ const ChatInterface = ({
         }
       } else {
         // Standard text message
-        result = await api.sendChatMessage(messageContent, conversationId);
+        // Create placeholder for AI response
+        const aiMessageId = Date.now() + 1;
+        const initialAiMessage = {
+          id: aiMessageId,
+          role: 'assistant',
+          content: '',
+          thoughts: [], // Array to store thinking steps
+          timestamp: new Date().toISOString(),
+          isStreaming: true
+        };
+        setMessages(prev => [...prev, initialAiMessage]);
+
+        // Streaming callback
+        let fullContent = '';
+        let currentThoughts = [];
+
+        await api.streamChatMessage(
+          {
+            message: messageContent,
+            conversation_id: conversationId,
+            input_type: attachmentData ? 'document' : 'text', // Simplified for now
+            document_data: attachmentData,
+            user_profile: null // Let API handle defaults
+          },
+          (chunk) => {
+            if (chunk.type === 'thought') {
+              if (!currentThoughts.includes(chunk.content)) {
+                currentThoughts.push(chunk.content);
+                setMessages(prev => prev.map(msg =>
+                  msg.id === aiMessageId ? { ...msg, thoughts: [...currentThoughts] } : msg
+                ));
+              }
+            } else if (chunk.type === 'token') {
+              fullContent += chunk.content;
+              setMessages(prev => prev.map(msg =>
+                msg.id === aiMessageId ? { ...msg, content: fullContent } : msg
+              ));
+            } else if (chunk.type === 'error') {
+              setMessages(prev => prev.map(msg =>
+                msg.id === aiMessageId ? { ...msg, content: `Error: ${chunk.content}`, isStreaming: false } : msg
+              ));
+            }
+          }
+        );
+
+        // Finalize message
+        setMessages(prev => prev.map(msg => {
+          if (msg.id === aiMessageId) {
+            return { ...msg, isStreaming: false };
+          }
+          return msg;
+        }));
+
+        setIsTyping(false);
+
+        // Refresh sidebar if new conversation
+        if (!conversationId && sidebarRefreshRef.current) {
+          sidebarRefreshRef.current();
+        }
+
       }
-      handleApiResponse(result);
     } catch (err) {
       console.error('Chat error:', err);
       toast.error('Failed to get response. Please try again.');
       setError('Failed to get response. Please try again.');
-      setIsTyping(false);
-    }
-  };
-
-  const handleApiResponse = (result) => {
-    if (!result.success) {
-      throw new Error(result.error);
-    }
-
-    const data = result.data;
-
-    // Store conversation_id from response to continue thread
-    if (data.metadata?.conversation_id) {
-      const isNewConversation = !conversationId; // Check if this is a new conversation
-      setConversationId(data.metadata.conversation_id);
-
-      // Refresh sidebar to show the new conversation
-      if (isNewConversation && sidebarRefreshRef.current) {
-        sidebarRefreshRef.current();
-      }
-    }
-
-    // Add AI response
-    const aiMessage = {
-      id: Date.now() + 1,
-      role: 'assistant',
-      content: data.response || 'Sorry, I could not process your request.',
-      timestamp: new Date().toISOString(),
-      metadata: data.metadata || {}
-    };
-
-    setMessages(prev => [...prev, aiMessage]);
-    setIsTyping(false);
-
-    // Check if we should prompt for satisfaction rating (every 50 conversations)
-    if (data.metadata?.prompt_satisfaction_rating && conversationId) {
-      setTimeout(() => {
-        setShowRatingModal(true);
-        toast('🎉 You\'ve reached a milestone! Please rate your experience.', {
-          duration: 4000,
-        });
-      }, 2000);
-    }
-
-    if (onSendMessage) {
-      onSendMessage(inputText, data);
+      // Remove the placeholder if it failed completely (optional, but cleaner)
     }
   };
 
@@ -471,8 +484,30 @@ const ChatInterface = ({
                   {message.role === 'user' ? '👤' : '🤖'}
                 </div>
                 <div className="message-content">
-                  <div className="message-text">{message.content}</div>
+                  {/* Thoughts / Reasoning Steps */}
+                  {message.thoughts && message.thoughts.length > 0 && (
+                    <div className="message-thoughts">
+                      <details>
+                        <summary>
+                          {message.isStreaming ? 'Thinking...' : 'View Thought Process'}
+                        </summary>
+                        <ul>
+                          {message.thoughts.map((thought, idx) => (
+                            <li key={idx}>{thought}</li>
+                          ))}
+                        </ul>
+                      </details>
+                    </div>
+                  )}
+
+                  {/* Main Content */}
+                  <div className="message-text">
+                    {message.content}
+                    {message.isStreaming && <span className="cursor">|</span>}
+                  </div>
+
                   <div className="message-time">{formatTime(message.timestamp)}</div>
+
                   {message.role === 'assistant' && message.metadata && (
                     <MessageMetadata metadata={message.metadata} />
                   )}

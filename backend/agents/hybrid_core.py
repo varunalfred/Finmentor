@@ -27,6 +27,8 @@ from agents.specialized_signatures import (
     BehavioralBiasDetection, PsychologicalProfiling
 )
 from agents.financial_tools import FinancialTools
+from utils.api_key_rotation import get_rotator  # API Key Rotation
+from services.database import db_service  # Import db_service for thread-local sessions
 
 logger = logging.getLogger(__name__)
 
@@ -37,12 +39,14 @@ logger = logging.getLogger(__name__)
 class FinancialAnalysis(dspy.Signature):
     """Analyze financial queries with knowledge base priority - Analysis Agent"""
     # INPUTS for financial analysis
-    question = dspy.InputField(desc="financial question or scenario")
+    query = dspy.InputField(desc="financial question or scenario")
     user_profile = dspy.InputField(desc="user experience level and preferences")
     market_context = dspy.InputField(desc="current market conditions")
     knowledge_base_context = dspy.InputField(desc="retrieved relevant financial documents and data")
+    kb_relevance_score = dspy.InputField(desc="how relevant the KB documents are (0-1)")
     
     # OUTPUTS after reasoning
+    reasoning = dspy.OutputField(desc="step-by-step thought process to arrive at the analysis")
     analysis = dspy.OutputField(desc="comprehensive financial analysis combining KB and market data")
     recommendation = dspy.OutputField(desc="actionable recommendation")
     risk_level = dspy.OutputField(desc="low/moderate/high")
@@ -56,6 +60,7 @@ class ConceptExplanation(dspy.Signature):
     user_level = dspy.InputField(desc="beginner/intermediate/advanced")  # Determines complexity
     knowledge_base_context = dspy.InputField(desc="retrieved documents from financial glossary and knowledge base")  # RAG context
     kb_relevance_score = dspy.InputField(desc="how relevant the KB documents are (0-1)")  # Quality indicator
+    constraints = dspy.InputField(desc="constraints on response length and style")  # NEW: Smart summarization
     
     # OUTPUTS after educational reasoning
     explanation = dspy.OutputField(desc="clear explanation combining KB and LLM knowledge, suited to user level")
@@ -250,6 +255,24 @@ class HybridFinMentorSystem:
         # Each instance maintains its own DSPy context
         self.lm = lm
 
+    def _get_rotated_lm(self):
+        """Get a fresh DSPy LM instance with a rotated API key"""
+        try:
+            rotator = get_rotator()
+            key = rotator.get_next_key()
+            
+            # Create a fresh DSPy LM with the new key
+            return dspy.LM(
+                model="gemini/" + self.config.get("model", "gemini-2.5-flash"),
+                api_key=key,
+                temperature=self.config.get("temperature", 0.7),
+                max_tokens=self.config.get("max_tokens", 2500),
+                num_retries=3
+            )
+        except Exception as e:
+            logger.warning(f"Failed to rotate key: {e}. Using default LM.")
+            return self.lm
+
     def _init_langchain(self):
         """Initialize LangChain components"""
         import os
@@ -346,7 +369,7 @@ class HybridFinMentorSystem:
                 logger.info("OpenAI tools agent created successfully")
             except Exception as e2:
                 print(f"DEBUG: Failed to create any agent: {e2}\n")
-                logger.error(f"Failed to create agent: {e2}")
+                logger.error(f"Failed to create any agent: {e2}")
                 raise
 
         # Create executor
@@ -458,7 +481,7 @@ class HybridFinMentorSystem:
                 description="Calculate optimal position size based on risk management. Input should be account_size.",
                 func=lambda account_size: self._run_async_in_thread(
                     self.financial_tools.calculate_position_size(
-                        account_size, 2, 100, 95  # defaults
+                        float(account_size), 2, 100, 95  # defaults
                     )
                 )
             ),
@@ -467,7 +490,7 @@ class HybridFinMentorSystem:
                 description="Calculate compound interest and future value. Input should be principal amount.",
                 func=lambda principal: self._run_async_in_thread(
                     self.financial_tools.calculate_compound_interest(
-                        principal, 7, 10  # 7% for 10 years as default
+                        float(principal), 7, 10  # 7% for 10 years as default
                     )
                 )
             ),
@@ -475,7 +498,7 @@ class HybridFinMentorSystem:
                 name="calculate_loan_payment",
                 description="Calculate loan/mortgage payments. Input should be principal amount.",
                 func=lambda principal: self._run_async_in_thread(
-                    self.financial_tools.calculate_loan_payment(principal, 5, 30)  # 5% for 30 years default
+                    self.financial_tools.calculate_loan_payment(float(principal), 5, 30)  # 5% for 30 years default
                 )
             ),
             Tool(
@@ -540,97 +563,93 @@ Thought: {agent_scratchpad}"""
         return prompt
 
     async def _tool_analyze_query(self, query: str) -> str:
-        """
-        RAG-First Financial Analysis Tool:
-        1. Query knowledge base for relevant financial information
-        2. Get current market context
-        3. Combine KB + market data + LLM reasoning
-        4. Cite sources used
-        """
+        """Use DSPy to analyze complex queries"""
         try:
             self.metrics["dspy_calls"] += 1
-            kb_context = ""
-            sources = []
-
-            # STEP 1: Retrieve from knowledge base
-            if self.agentic_rag and self.user_profile.get("user_id"):
-                try:
-                    logger.info(f"Querying knowledge base for analysis: {query}")
-                    
-                    # Create a new DB session for this event loop (in case we're in a different thread)
-                    from services.database import db_service
-                    async with db_service.AsyncSessionLocal() as new_session:
-                        # Temporarily set the new session
-                        old_session = self.agentic_rag.db
-                        self.agentic_rag.set_db_session(new_session)
+            
+            # Create thread-local DB session for RAG
+            async with db_service.AsyncSessionLocal() as session:
+                # Retrieve relevant context from KB if available
+                kb_context = ""
+                kb_relevance = 0.0
+                
+                if self.agentic_rag and self.user_profile.get("user_id"):
+                    try:
+                        # Get embedding for query
+                        embedding = await self.agentic_rag.embedding_service.get_embedding(query)
                         
-                        try:
-                            rag_result = await self.agentic_rag.retrieve_and_generate_context(
-                                query=query,
-                                user_id=self.user_profile.get("user_id"),
-                                user_context=self.user_profile
-                            )
-                        finally:
-                            # Restore original session
-                            self.agentic_rag.db = old_session
-                    
-                    retrieved_docs = rag_result.get("context", [])
-                    if retrieved_docs:
-                        kb_context = "\n\n".join([
-                            f"[KB Document {i+1}] {doc}" 
-                            for i, doc in enumerate(retrieved_docs[:5])
-                        ])
-                        sources.append("Knowledge Base")
-                        logger.info(f"Retrieved {len(retrieved_docs)} documents from KB")
-                    else:
-                        kb_context = "No relevant documents found in knowledge base."
-                except Exception as e:
-                    logger.error(f"Error retrieving from knowledge base: {e}")
-                    kb_context = "Knowledge base unavailable."
-            else:
-                kb_context = "Knowledge base not configured."
+                        # Retrieve documents using thread-local session
+                        retrieved_docs = await self.agentic_rag.retrieve_from_documents(
+                            query_embedding=embedding,
+                            user_id=self.user_profile["user_id"],
+                            filters={"user_id": self.user_profile["user_id"]},
+                            k=5,
+                            db_session=session  # Pass thread-local session
+                        )
+                        
+                        if retrieved_docs:
+                            kb_context = "\n".join([
+                                f"Document: {doc['filename']}\nContent: {doc['content']}" 
+                                for doc in retrieved_docs
+                            ])
+                            # Calculate relevance based on distance (lower is better)
+                            avg_distance = sum(d['distance'] for d in retrieved_docs) / len(retrieved_docs)
+                            # Convert distance to similarity score (approximate)
+                            kb_relevance = max(0.0, 1.0 - avg_distance)
+                            logger.info(f"Retrieved {len(retrieved_docs)} documents from KB")
+                        else:
+                            kb_context = "No relevant documents found."
+                            
+                    except Exception as e:
+                        logger.error(f"Error retrieving from KB in analyze_query: {e}")
+                        kb_context = "Error retrieving context."
 
-            # STEP 2: Get market context
-            market_context = await self._get_market_context()
-            if market_context:
-                sources.append("Market Data")
+                # STEP 2: Get market context
+                market_context = await self._get_market_context()
+                
+                # Use DSPy context manager
+                lm = self._get_rotated_lm()
+                with dspy.context(lm=lm):
+                    result = self.dspy_reasoner(
+                        query_type="analyze",
+                        query=query,
+                        user_profile=json.dumps(self.user_profile),
+                        market_context=market_context,
+                        knowledge_base_context=kb_context,
+                        kb_relevance_score=str(kb_relevance) if kb_relevance is not None else "0.0"
+                    )
 
-            # STEP 3: Use DSPy for reasoning with all available context
-            # Use context manager to avoid async configuration issues
-            with dspy.context(lm=self.lm):
-                result = self.dspy_reasoner(
-                    query_type="analyze",
-                    question=query,
-                    user_profile=self.user_profile.get("type", "beginner"),
-                    market_context=market_context,
-                    knowledge_base_context=kb_context
-                )
+                # Track sources
+                sources = []
+                if kb_relevance > 0.1: # Arbitrary threshold for considering KB as a source
+                    sources.append("Knowledge Base")
+                if market_context:
+                    sources.append("Market Data")
+                if result.sources_used:
+                    if "llm" in result.sources_used.lower():
+                        sources.append("LLM Analysis")
+                source_text = " + ".join(sources) if sources else "LLM Analysis"
 
-            # Track sources
-            if result.sources_used:
-                if "llm" in result.sources_used.lower():
-                    sources.append("LLM Analysis")
-            source_text = " + ".join(sources) if sources else "LLM Analysis"
+                # Update confidence metric
+                confidence = float(result.confidence)
+                self._update_avg_confidence(confidence)
 
-            # Update confidence metric
-            confidence = float(result.confidence)
-            self._update_avg_confidence(confidence)
+            return f"""
+📊 Analysis for: {query}
 
-            response = f"""
-📊 Analysis: {result.analysis}
+🤔 Reasoning:
+{result.reasoning}
 
-💡 Recommendation: {result.recommendation}
+💡 Analysis:
+{result.analysis}
+
+👉 Recommendation:
+{result.recommendation}
 
 ⚠️ Risk Level: {result.risk_level}
-
-📈 Confidence: {result.confidence}%
-
+Confidence: {result.confidence}
 📖 Sources: {source_text}
 """
-            
-            logger.info(f"Financial analysis completed using: {source_text}")
-            return response
-
         except Exception as e:
             logger.error(f"Error in analyze query: {e}")
             return f"Error analyzing query: {str(e)}"
@@ -644,46 +663,38 @@ Thought: {agent_scratchpad}"""
         """
         try:
             self.metrics["dspy_calls"] += 1
+            # STEP 1: Query Knowledge Base (RAG)
             kb_context = ""
             kb_relevance = 0.0
             sources = []
 
-            # STEP 1: Retrieve from knowledge base (PRIMARY SOURCE)
-            if self.agentic_rag and self.user_profile.get("user_id"):
+            if self.agentic_rag:
                 try:
-                    logger.info(f"Querying knowledge base for concept: {concept}")
-                    
-                    # Create a new DB session for this event loop (in case we're in a different thread)
-                    from services.database import db_service
-                    async with db_service.AsyncSessionLocal() as new_session:
-                        # Temporarily set the new session
-                        old_session = self.agentic_rag.db
-                        self.agentic_rag.set_db_session(new_session)
+                    # Create thread-local DB session for RAG
+                    async with db_service.AsyncSessionLocal() as session:
+                        logger.info(f"Querying knowledge base for concept: {concept}")
+                        embedding = await self.agentic_rag.embedding_service.get_embedding(concept)
                         
-                        try:
-                            rag_result = await self.agentic_rag.retrieve_and_generate_context(
-                                query=concept,
-                                user_id=self.user_profile.get("user_id"),
-                                user_context=self.user_profile
-                            )
-                        finally:
-                            # Restore original session
-                            self.agentic_rag.db = old_session
-                    
-                    retrieved_docs = rag_result.get("context", [])
-                    if retrieved_docs:
-                        # Format retrieved documents
-                        kb_context = "\n\n".join([
-                            f"[KB Document {i+1}] {doc}" 
-                            for i, doc in enumerate(retrieved_docs[:5])  # Top 5 docs
-                        ])
-                        # Calculate relevance based on number and quality of docs
-                        kb_relevance = min(len(retrieved_docs) / 3.0, 1.0)  # 3+ docs = high relevance
-                        sources.append("Knowledge Base")
-                        logger.info(f"Retrieved {len(retrieved_docs)} documents from KB (relevance: {kb_relevance:.2f})")
-                    else:
-                        logger.info("No documents found in knowledge base")
-                        kb_context = "No relevant documents found in knowledge base."
+                        # Retrieve from education content using thread-local session
+                        retrieved_docs = await self.agentic_rag.retrieve_from_education(
+                            query_embedding=embedding,
+                            filters={"level": self.user_profile.get("education_level", "beginner")},
+                            k=3,
+                            db_session=session  # Pass thread-local session
+                        )
+
+                        if retrieved_docs:
+                            kb_context = "\n\n".join([
+                                f"Source: {doc['title']}\nSummary: {doc['summary']}\nContent: {doc['content']}"
+                                for i, doc in enumerate(retrieved_docs[:5])  # Top 5 docs
+                            ])
+                            # Calculate relevance based on number and quality of docs
+                            kb_relevance = min(len(retrieved_docs) / 3.0, 1.0)  # 3+ docs = high relevance
+                            sources.append("Knowledge Base")
+                            logger.info(f"Retrieved {len(retrieved_docs)} documents from KB (relevance: {kb_relevance:.2f})")
+                        else:
+                            logger.info("No documents found in knowledge base")
+                            kb_context = "No relevant documents found in knowledge base."
                 except Exception as e:
                     logger.error(f"Error retrieving from knowledge base: {e}")
                     kb_context = "Knowledge base unavailable."
@@ -695,13 +706,20 @@ Thought: {agent_scratchpad}"""
             # STEP 2: Use DSPy with KB context (will use LLM knowledge if KB insufficient)
             # Note: Using __call__() instead of .forward() as recommended by DSPy
             # Use context manager to avoid async configuration issues
-            with dspy.context(lm=self.lm):
+            # Get rotated LM for this request
+            lm = self._get_rotated_lm()
+            
+            # Determine user level from profile (prioritize user_type)
+            user_level = self.user_profile.get("type") or self.user_profile.get("user_type", "beginner")
+
+            with dspy.context(lm=lm):
                 result = self.dspy_reasoner(
                     query_type="explain",
                     concept=concept,
-                    user_level=self.user_profile.get("education_level", "beginner"),
+                    user_level=user_level,
                     knowledge_base_context=kb_context,
-                    kb_relevance_score=str(kb_relevance)
+                    kb_relevance_score=str(kb_relevance),
+                    constraints="Provide a comprehensive but concise explanation. Ensure the response fits within standard token limits (approx 2000 words) without losing key details. Summarize if necessary."
                 )
 
             # Track which sources were used
@@ -741,7 +759,8 @@ Thought: {agent_scratchpad}"""
             market_conditions = await self._get_market_conditions()
 
             # Use DSPy context manager to avoid async configuration issues
-            with dspy.context(lm=self.lm):
+            lm = self._get_rotated_lm()
+            with dspy.context(lm=lm):
                 result = self.dspy_reasoner.forward(
                     query_type="risk",
                     investment=investment,
@@ -846,8 +865,37 @@ Investment Returns:
         self.user_profile = user_profile
         self.metrics["total_queries"] += 1
 
+        # === API KEY ROTATION ===
+        # Get a fresh key for this request to distribute load
+        try:
+            rotator = get_rotator()
+            current_api_key = rotator.get_next_key()
+            
+            # Update Environment for libraries that read env vars
+            import os
+            os.environ["GEMINI_API_KEY"] = current_api_key
+            
+            # Update LangChain LLM instance if it exists and is Google
+            if hasattr(self, 'llm') and hasattr(self.llm, 'google_api_key'):
+                self.llm.google_api_key = current_api_key
+                
+            # Create a fresh DSPy LM for this request
+            # This ensures the new key is used for reasoning
+            request_lm = dspy.LM(
+                model="gemini/" + self.config.get("model", "gemini-2.5-flash"),
+                api_key=current_api_key,
+                temperature=self.config.get("temperature", 0.7),
+                max_tokens=self.config.get("max_tokens", 2500),
+                num_retries=3
+            )
+        except Exception as e:
+            logger.warning(f"Failed to rotate API key: {e}. Using default.")
+            request_lm = self.lm  # Fallback to default
+
+
         try:
             # Step 1: Use Agentic RAG if not provided
+
             if not rag_context and self.agentic_rag and user_profile.get("user_id"):
                 self.metrics["rag_calls"] += 1
                 rag_context = await self.agentic_rag.retrieve_and_generate_context(
@@ -901,7 +949,10 @@ Investment Returns:
             }
 
             # Step 3: Process with LangChain agent (which uses DSPy tools)
-            self.metrics["langchain_calls"] += 1
+            # Use the fresh LM context for DSPy calls inside LangChain tools
+            with dspy.context(lm=request_lm):
+                self.metrics["langchain_calls"] += 1
+
             logger.info(f"Invoking LangChain agent with query: '{query[:50]}...'")
             logger.info(f"Agent input keys: {list(agent_input.keys())}")
             
@@ -965,12 +1016,9 @@ Investment Returns:
                     "processing_time": processing_time,
                     "voice_input": voice_input,
                     "confidence": self.metrics["avg_confidence"],
-                    "tools_used": [tool.name for tool in self.tools],
-                    "user_level": user_profile.get("education_level", "unknown")
                 },
                 "metrics": self.metrics
             }
-
         except Exception as e:
             import traceback
             logger.error(f"Error processing query: {e}")
@@ -980,6 +1028,119 @@ Investment Returns:
                 "error": str(e),
                 "response": "I apologize, but I encountered an error processing your request. Please try again."
             }
+
+    async def stream_query(
+        self,
+        query: str,
+        user_profile: Dict[str, Any],
+        voice_input: bool = False,
+        rag_context: Optional[Dict] = None
+    ):
+        """
+        Stream the query processing, yielding thoughts and final answer tokens.
+        Yields JSON strings: {"type": "thought"|"token"|"error", "content": "..."}
+        """
+        import json
+        start_time = datetime.now()
+        self.user_profile = user_profile
+        
+        # === API KEY ROTATION ===
+        try:
+            rotator = get_rotator()
+            current_api_key = rotator.get_next_key()
+            import os
+            os.environ["GEMINI_API_KEY"] = current_api_key
+            if hasattr(self, 'llm') and hasattr(self.llm, 'google_api_key'):
+                self.llm.google_api_key = current_api_key
+            
+            request_lm = dspy.LM(
+                model="gemini/" + self.config.get("model", "gemini-2.5-flash"),
+                api_key=current_api_key,
+                temperature=self.config.get("temperature", 0.7),
+                max_tokens=self.config.get("max_tokens", 2500),
+                num_retries=3
+            )
+        except Exception as e:
+            logger.warning(f"Failed to rotate API key: {e}. Using default.")
+            request_lm = self.lm
+
+        try:
+            # Step 1: RAG Context
+            if not rag_context and self.agentic_rag and user_profile.get("user_id"):
+                yield json.dumps({"type": "thought", "content": "Searching knowledge base..."}) + "\n"
+                rag_context = await self.agentic_rag.retrieve_and_generate_context(
+                    query=query,
+                    user_id=user_profile["user_id"],
+                    user_context=user_profile
+                )
+            
+            # Step 2: Prepare Input
+            enriched_query = query
+            if rag_context and rag_context.get("context"):
+                context_str = "\n\nRelevant Context from Knowledge Base:\n"
+                for ctx in rag_context["context"][:3]:
+                    context_str += f"- {ctx.get('content', '')[:200]}...\n"
+                enriched_query = context_str + "\n\nUser Query: " + query
+            
+            user_level = user_profile.get("education_level", "beginner")
+            enriched_query = f"[User Level: {user_level}]\n\n{enriched_query}"
+            
+            agent_input = {"input": enriched_query}
+
+            # Step 3: Stream Events
+            yield json.dumps({"type": "thought", "content": "Analyzing query..."}) + "\n"
+            
+            with dspy.context(lm=request_lm):
+                async for event in self.agent_executor.astream_events(
+                    agent_input,
+                    version="v2"
+                ):
+                    kind = event["event"]
+                    
+                    if kind == "on_chain_start":
+                        if event["name"] == "Agent":
+                            yield json.dumps({"type": "thought", "content": "Thinking..."}) + "\n"
+                            
+                    elif kind == "on_tool_start":
+                        tool_name = event["name"]
+                        tool_input = event["data"].get("input")
+                        yield json.dumps({"type": "thought", "content": f"Using tool: {tool_name}..."}) + "\n"
+                        
+                    elif kind == "on_tool_end":
+                        tool_output = event["data"].get("output")
+                        # Truncate long outputs for display
+                        output_str = str(tool_output)
+                        if len(output_str) > 100:
+                            output_str = output_str[:100] + "..."
+                        yield json.dumps({"type": "thought", "content": f"Tool result: {output_str}"}) + "\n"
+
+                    elif kind == "on_chat_model_stream":
+                        content = event["data"]["chunk"].content
+                        if content:
+                            yield json.dumps({"type": "token", "content": content}) + "\n"
+
+            # Step 4: Yield Completion Data
+            processing_time = (datetime.now() - start_time).total_seconds()
+            completion_data = {
+                "rag_context": {
+                    "intent": rag_context.get("intent") if rag_context else None,
+                    "sources_used": rag_context.get("retrieval_plan", {}).get("sources", []) if rag_context else [],
+                    "documents_retrieved": len(rag_context.get("context", [])) if rag_context else 0
+                },
+                "metadata": {
+                    "processing_time": processing_time,
+                    "voice_input": voice_input,
+                    "confidence": self.metrics["avg_confidence"],
+                    "tools_used": [tool.name for tool in self.tools],
+                    "user_level": user_profile.get("education_level", "unknown")
+                },
+                "metrics": self.metrics
+            }
+            yield json.dumps({"type": "complete", "data": completion_data}) + "\n"
+
+        except Exception as e:
+            logger.error(f"Error in stream_query: {e}")
+            yield json.dumps({"type": "error", "content": str(e)}) + "\n"
 
     def get_metrics(self) -> Dict[str, Any]:
         """Get system performance metrics"""

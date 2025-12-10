@@ -40,6 +40,29 @@ class RetrievalStrategy(Enum):
 
 # ============= Agentic RAG Service =============
 
+class EmbeddingServiceWrapper:
+    """Wrapper to unify different embedding service interfaces"""
+    def __init__(self, service, service_type):
+        self.service = service
+        self.service_type = service_type
+
+    async def get_embedding(self, text: str) -> List[float]:
+        """Get embedding for text, handling different provider methods"""
+        try:
+            if self.service_type == "sentence_transformer":
+                # SentenceTransformer.encode returns numpy array, convert to list
+                embedding = self.service.encode(text)
+                return embedding.tolist() if hasattr(embedding, 'tolist') else list(embedding)
+            elif self.service_type == "langchain":
+                # LangChain embeddings use embed_query
+                return await self.service.aembed_query(text)
+            else:
+                raise ValueError(f"Unknown service type: {self.service_type}")
+        except Exception as e:
+            logger.error(f"Error generating embedding: {e}")
+            # Return zero vector as fallback to prevent crash
+            return [0.0] * 384  # Assuming 384 dim for fallback
+
 class AgenticRAG:
     """
     Singleton Agentic RAG that intelligently decides:
@@ -95,6 +118,8 @@ class AgenticRAG:
             QueryIntent.RISK_ASSESSMENT
         }
 
+
+
     def _init_embedding_service(self):
         """Initialize embedding service - use EMBEDDING_API_KEY or fall back to local"""
         # Check for dedicated embedding API key (allows choosing embedding provider)
@@ -104,21 +129,24 @@ class AgenticRAG:
             # OpenAI key format
             from langchain_openai import OpenAIEmbeddings
             logger.info("Using OpenAI embeddings (via EMBEDDING_API_KEY)")
-            return OpenAIEmbeddings(model="text-embedding-3-small", openai_api_key=embedding_key)
+            service = OpenAIEmbeddings(model="text-embedding-3-small", openai_api_key=embedding_key)
+            return EmbeddingServiceWrapper(service, "langchain")
         elif embedding_key and embedding_key.startswith("AIza"):
             # Gemini key format
             from langchain_google_genai import GoogleGenerativeAIEmbeddings
             logger.info("Using Gemini embeddings (via EMBEDDING_API_KEY)")
-            return GoogleGenerativeAIEmbeddings(
+            service = GoogleGenerativeAIEmbeddings(
                 model="models/embedding-001",
                 google_api_key=embedding_key
             )
+            return EmbeddingServiceWrapper(service, "langchain")
         else:
             # Use FREE local embeddings by default - unlimited queries!
             # This separates embeddings from LLM API keys
             from sentence_transformers import SentenceTransformer
             logger.info("Using LOCAL SentenceTransformer embeddings (unlimited, no API key needed)")
-            return SentenceTransformer('all-MiniLM-L6-v2', local_files_only=True)
+            service = SentenceTransformer('all-MiniLM-L6-v2', local_files_only=True)
+            return EmbeddingServiceWrapper(service, "sentence_transformer")
 
     # ============= Intent Classification =============
 
@@ -218,33 +246,36 @@ class AgenticRAG:
         self,
         query_embedding: List[float],
         filters: Dict[str, Any],
-        k: int = 5
+        k: int = 5,
+        db_session: AsyncSession = None
     ) -> List[Dict[str, Any]]:
         """Retrieve from conversation history using PGVector"""
         try:
+            session = db_session or self.db
+            if not session:
+                logger.warning("No database session available for retrieval")
+                return []
+
             # Convert embedding list to proper vector string format for PGVector
             # Format: '[0.1,0.2,0.3]' (no spaces, wrapped in brackets)
             embedding_str = '[' + ','.join(map(str, query_embedding)) + ']'
             
-            # Build base query with vector similarity
-            # CAST the string to vector type explicitly
+            # Base query
             query_text = """
-                SELECT
-                    m.id,
-                    m.content,
-                    m.role,
-                    m.confidence_score,
-                    m.created_at,
-                    c.topic,
-                    m.embedding <-> CAST(:embedding AS vector) as distance
+                SELECT 
+                    id, 
+                    content, 
+                    role, 
+                    confidence_score, 
+                    created_at, 
+                    embedding <-> CAST(:embedding AS vector) as distance
                 FROM messages m
-                JOIN conversations c ON m.conversation_id = c.id
-                WHERE m.embedding IS NOT NULL
+                WHERE embedding IS NOT NULL
             """
-
-            # Add filters
+            
             params = {"embedding": embedding_str}
 
+            # Apply filters
             if "user_id" in filters:
                 query_text += " AND m.user_id = :user_id"
                 params["user_id"] = filters["user_id"]
@@ -263,7 +294,7 @@ class AgenticRAG:
             params["k"] = k
 
             # Execute query
-            result = await self.db.execute(text(query_text), params)
+            result = await session.execute(text(query_text), params)
             rows = result.fetchall()
 
             # Format results
@@ -278,7 +309,7 @@ class AgenticRAG:
                     "role": row.role,
                     "confidence_score": row.confidence_score,
                     "created_at": row.created_at.isoformat() if row.created_at else None,
-                    "topic": row.topic,
+                    "topic": "general",  # Default topic since column doesn't exist on message
                     "distance": float(row.distance),
                     "source": "conversations"
                 })
@@ -293,10 +324,16 @@ class AgenticRAG:
         self,
         query_embedding: List[float],
         filters: Dict[str, Any],
-        k: int = 5
+        k: int = 5,
+        db_session: AsyncSession = None
     ) -> List[Dict[str, Any]]:
         """Retrieve from educational content using PGVector"""
         try:
+            session = db_session or self.db
+            if not session:
+                logger.warning("No database session available for retrieval")
+                return []
+
             # Convert embedding list to proper vector string format for PGVector
             # Format: '[0.1,0.2,0.3]' (no spaces, wrapped in brackets)
             embedding_str = '[' + ','.join(map(str, query_embedding)) + ']'
@@ -327,7 +364,7 @@ class AgenticRAG:
             query_text += " ORDER BY distance LIMIT :k"
             params["k"] = k
 
-            result = await self.db.execute(text(query_text), params)
+            result = await session.execute(text(query_text), params)
             rows = result.fetchall()
 
             results = []
@@ -355,7 +392,8 @@ class AgenticRAG:
         user_id: str,
         filters: Dict[str, Any],
         include_public: bool = True,
-        k: int = 5
+        k: int = 5,
+        db_session: AsyncSession = None
     ) -> List[Dict[str, Any]]:
         """
         Retrieve from user documents + public community documents using PGVector
@@ -371,6 +409,11 @@ class AgenticRAG:
             List of relevant document chunks with attribution
         """
         try:
+            session = db_session or self.db
+            if not session:
+                logger.warning("No database session available for retrieval")
+                return []
+
             # Convert embedding to PGVector format
             embedding_str = '[' + ','.join(map(str, query_embedding)) + ']'
             
@@ -387,13 +430,13 @@ class AgenticRAG:
                         ud.filename,
                         ud.user_id as uploader_id,
                         dc.conversation_id,
-                        (dc.chunk_embedding <=> $1::vector) as distance
+                        (dc.chunk_embedding <=> :embedding) as distance
                     FROM document_chunks dc
                     JOIN user_documents ud ON dc.document_id = ud.id
-                    WHERE (dc.user_id = $2 OR dc.is_public = TRUE)
+                    WHERE (dc.user_id = :user_id OR dc.is_public = TRUE)
                     AND dc.chunk_embedding IS NOT NULL
-                    ORDER BY dc.chunk_embedding <=> $1::vector
-                    LIMIT $3
+                    ORDER BY dc.chunk_embedding <=> :embedding
+                    LIMIT :k
                 """
             else:
                 # Only user's private docs
@@ -407,19 +450,19 @@ class AgenticRAG:
                         ud.filename,
                         ud.user_id as uploader_id,
                         dc.conversation_id,
-                        (dc.chunk_embedding <=> $1::vector) as distance
+                        (dc.chunk_embedding <=> :embedding) as distance
                     FROM document_chunks dc
                     JOIN user_documents ud ON dc.document_id = ud.id
-                    WHERE dc.user_id = $2
+                    WHERE dc.user_id = :user_id
                     AND dc.chunk_embedding IS NOT NULL
-                    ORDER BY dc.chunk_embedding <=> $1::vector
-                    LIMIT $3
+                    ORDER BY dc.chunk_embedding <=> :embedding
+                    LIMIT :k
                 """
             
-            # Execute query with positional parameters
-            result = await self.db.execute(
+            # Execute query with named parameters
+            result = await session.execute(
                 text(query_text),
-                (embedding_str, user_id, k)
+                {"embedding": embedding_str, "user_id": user_id, "k": k}
             )
             rows = result.fetchall()
             
@@ -476,12 +519,8 @@ class AgenticRAG:
     ) -> List[Dict[str, Any]]:
         """Execute retrieval based on plan"""
         try:
-            # Generate embedding for query
-            if hasattr(self.embedding_service, 'embed_query'):
-                query_embedding = await self.embedding_service.aembed_query(query)
-            else:
-                # For sentence transformers
-                query_embedding = self.embedding_service.encode(query).tolist()
+            # Generate embedding for query using wrapper
+            query_embedding = await self.embedding_service.get_embedding(query)
 
             all_results = []
 
@@ -656,11 +695,8 @@ class AgenticRAG:
     ) -> bool:
         """Store embedding for a message"""
         try:
-            # Generate embedding
-            if hasattr(self.embedding_service, 'embed_query'):
-                embedding = await self.embedding_service.aembed_query(content)
-            else:
-                embedding = self.embedding_service.encode(content).tolist()
+            # Generate embedding using wrapper
+            embedding = await self.embedding_service.get_embedding(content)
 
             # Convert embedding list to proper pgvector format
             # Format: '[0.1,0.2,0.3]' - pgvector accepts this directly
@@ -693,11 +729,8 @@ class AgenticRAG:
     ) -> List[Dict[str, Any]]:
         """Find similar messages for a user"""
         try:
-            # Generate query embedding
-            if hasattr(self.embedding_service, 'embed_query'):
-                query_embedding = await self.embedding_service.aembed_query(query)
-            else:
-                query_embedding = self.embedding_service.encode(query).tolist()
+            # Generate query embedding using wrapper
+            query_embedding = await self.embedding_service.get_embedding(query)
 
             # Convert embedding list to proper vector string format for PGVector
             # Format: '[0.1,0.2,0.3]' (no spaces, wrapped in brackets)

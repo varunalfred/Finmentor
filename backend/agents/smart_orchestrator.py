@@ -21,6 +21,7 @@ import json
 from agents.hybrid_core import HybridFinMentorSystem
 from agents.dependency_graph import dependency_graph, AgentType
 from utils.rate_limiter import SmartRateLimitedOrchestrator
+from utils.api_key_rotation import get_rotator  # API Key Rotation
 from services.agentic_rag import rag_service, QueryIntent
 from services.data_sources import DataSourcesManager
 
@@ -62,6 +63,31 @@ class SmartMultiAgentOrchestrator:
         # Data manager for fetching market data, news, etc.
         self.data_manager = DataSourcesManager()
         
+        # === DYNAMIC RATE LIMITING ===
+        # Calculate limits based on available API keys
+        try:
+            rotator = get_rotator()
+            key_count = len(rotator.api_keys)
+            
+            # 10 RPM per key (Free Tier)
+            effective_rpm = rpm_limit * key_count
+            
+            # 2 concurrent requests per key is safe
+            effective_concurrent = max_concurrent * key_count
+            
+            logger.info(f"[INFO] Detected {key_count} API keys. Boosting limits:")
+            print(f"DEBUG: [INFO] Detected {key_count} API keys. Boosting limits:")
+            logger.info(f"   RPM: {rpm_limit} -> {effective_rpm}")
+            print(f"DEBUG:    RPM: {rpm_limit} -> {effective_rpm}")
+            logger.info(f"   Concurrent: {max_concurrent} -> {effective_concurrent}")
+            
+            rpm_limit = effective_rpm
+            max_concurrent = effective_concurrent
+            
+        except Exception as e:
+            logger.warning(f"Failed to load API keys for pooling: {e}. Using defaults.")
+            print(f"DEBUG: ❌ Failed to load API keys for pooling: {e}. Using defaults.")
+
         # Rate limiting orchestrator
         self.rate_limited_orchestrator = SmartRateLimitedOrchestrator(
             rpm_limit=rpm_limit,
@@ -696,7 +722,10 @@ async def test_smart_orchestrator():
         # Select agents (orchestrator will handle dependencies)
         required_agents = [
             AgentType.MARKET_ANALYST,
+            AgentType.TECHNICAL_ANALYSIS,  # Added dependency
+            AgentType.ECONOMIC_ANALYSIS,   # Added dependency
             AgentType.RISK_ASSESSMENT,
+            AgentType.BEHAVIORAL_ANALYSIS, # Added dependency
             AgentType.PORTFOLIO_OPTIMIZER,
             AgentType.TAX_ADVISOR
         ]
@@ -711,12 +740,16 @@ async def test_smart_orchestrator():
         print("\n" + "="*80)
         print("SMART ORCHESTRATOR TEST RESULT")
         print("="*80)
-        print(f"Success: {result['success']}")
-        print(f"Response:\n{result['response']}")
-        print(f"\nMetadata:")
-        print(f"  Total agents: {result['metadata']['total_agents']}")
-        print(f"  Total stages: {result['metadata']['total_stages']}")
-        print(f"  Processing time: {result['metadata']['processing_time_seconds']:.2f}s")
+        print(f"Success: {result.get('success', False)}")
+        print(f"Response:\n{result.get('response', 'No response')}")
+        
+        if 'metadata' in result:
+            print(f"\nMetadata:")
+            print(f"  Total agents: {result['metadata'].get('total_agents', 'N/A')}")
+            print(f"  Total stages: {result['metadata'].get('total_stages', 'N/A')}")
+            print(f"  Processing time: {result['metadata'].get('processing_time_seconds', 0):.2f}s")
+        else:
+            print("\nNo metadata available (likely due to error)")
         print("="*80)
 
 

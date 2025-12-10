@@ -10,6 +10,11 @@ import random
 import logging
 from typing import List, Callable, Any
 from functools import wraps
+from dotenv import load_dotenv
+import threading
+
+# Ensure env vars are loaded
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +34,7 @@ class APIKeyRotator:
     
     Usage:
         rotator = APIKeyRotator.from_env()
-        key = await rotator.get_next_key()
+        key = rotator.get_next_key()
     """
     
     def __init__(self, api_keys: List[str]):
@@ -38,65 +43,74 @@ class APIKeyRotator:
         
         self.api_keys = api_keys
         self.current_index = 0
-        self.lock = asyncio.Lock()
+        # Use threading.Lock for thread safety across event loops
+        self.lock = threading.Lock()
         
         logger.info(f"Initialized APIKeyRotator with {len(api_keys)} keys")
         logger.info(f"Total rate limit: {len(api_keys) * 10} RPM (Free Tier)")
     
     @classmethod
-    def from_env(cls, env_var: str = "GEMINI_API_KEYS") -> "APIKeyRotator":
+    def from_env(cls, env_var: str = "GEMINI_API_KEY") -> "APIKeyRotator":
         """
         Create rotator from environment variable
         
-        Supports two formats:
-        1. Comma-separated: GEMINI_API_KEYS=key1,key2,key3
-        2. Individual: GEMINI_API_KEY_1, GEMINI_API_KEY_2, etc.
-        
-        Args:
-            env_var: Environment variable name
-            
-        Returns:
-            APIKeyRotator instance
+        Supports:
+        1. Standard: GEMINI_API_KEY
+        2. Indexed: GEMINI_API_KEY1, GEMINI_API_KEY2, etc.
+        3. Comma-separated: GEMINI_API_KEYS=key1,key2
         """
-        # Try comma-separated format first
-        keys_str = os.getenv(env_var, "")
-        if keys_str:
-            api_keys = [key.strip() for key in keys_str.split(",") if key.strip()]
-            if api_keys:
-                return cls(api_keys)
-        
-        # Try individual key format
         api_keys = []
+        
+        # 1. Check for indexed keys (GEMINI_API_KEY1, GEMINI_API_KEY2...)
+        # Also check base GEMINI_API_KEY
+        base_key = os.getenv("GEMINI_API_KEY")
+        if base_key:
+            api_keys.append(base_key)
+            
         i = 1
         while True:
-            key = os.getenv(f"GEMINI_API_KEY_{i}", "")
+            # Check for GEMINI_API_KEY1, GEMINI_API_KEY2, etc.
+            key = os.getenv(f"GEMINI_API_KEY{i}")
+            if not key:
+                # Also check with underscore: GEMINI_API_KEY_1
+                key = os.getenv(f"GEMINI_API_KEY_{i}")
+                
             if not key:
                 break
+                
             api_keys.append(key)
             i += 1
-        
-        if api_keys:
-            return cls(api_keys)
-        
-        # Fallback to single key
-        single_key = os.getenv("GEMINI_API_KEY", "")
-        if single_key:
-            logger.warning("Using single API key. Consider adding multiple keys for better rate limits.")
-            return cls([single_key])
-        
-        raise ValueError(
-            f"No API keys found. Set {env_var} or GEMINI_API_KEY_1, GEMINI_API_KEY_2, etc."
-        )
+            
+        # 2. Check for comma-separated list
+        if not api_keys:
+            keys_str = os.getenv("GEMINI_API_KEYS", "")
+            if keys_str:
+                api_keys = [key.strip() for key in keys_str.split(",") if key.strip()]
+
+        if not api_keys:
+            raise ValueError(
+                "No API keys found. Please set GEMINI_API_KEY, GEMINI_API_KEY1, etc."
+            )
+            
+        # Remove duplicates while preserving order
+        unique_keys = []
+        seen = set()
+        for key in api_keys:
+            if key not in seen:
+                unique_keys.append(key)
+                seen.add(key)
+                
+        return cls(unique_keys)
     
-    async def get_next_key(self) -> str:
+    def get_next_key(self) -> str:
         """
         Get next API key in round-robin fashion
-        Thread-safe with async lock
+        Thread-safe with threading lock
         
         Returns:
             API key string
         """
-        async with self.lock:
+        with self.lock:
             key = self.api_keys[self.current_index]
             self.current_index = (self.current_index + 1) % len(self.api_keys)
             
@@ -108,15 +122,9 @@ class APIKeyRotator:
     
     def get_current_key_sync(self) -> str:
         """
-        Synchronous version of get_next_key (for non-async contexts)
-        NOT thread-safe - use get_next_key() in async code
-        
-        Returns:
-            API key string
+        Synchronous version of get_next_key (alias)
         """
-        key = self.api_keys[self.current_index]
-        self.current_index = (self.current_index + 1) % len(self.api_keys)
-        return key
+        return self.get_next_key()
     
     async def execute_with_retry(
         self,
@@ -228,7 +236,7 @@ if __name__ == "__main__":
         # Simulate 10 parallel agent requests
         print("Simulating 10 parallel agent requests:")
         for i in range(10):
-            key = await rotator.get_next_key()
+            key = rotator.get_next_key()
             key_preview = f"{key[:10]}...{key[-4:]}"
             print(f"  Agent {i+1}: Using key {key_preview}")
         

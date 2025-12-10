@@ -138,17 +138,17 @@ class FinancialToolkit:
 
 📈 Key Metrics:
 - Market Cap: ${data['market_cap']:,.0f}
-- P/E Ratio: {data['pe_ratio']:.2f if data['pe_ratio'] else 'N/A'}
+- P/E Ratio: {f"{data['pe_ratio']:.2f}" if data['pe_ratio'] else 'N/A'}
 - Volume: {data['volume']:,}
-- Dividend Yield: {data['dividend_yield']*100:.2f}% if data['dividend_yield'] else 'None'
+- Dividend Yield: {f"{data['dividend_yield']*100:.2f}%" if data['dividend_yield'] else 'None'}
 
 🏢 Company:
 - Sector: {data['company']['sector']}
 - Industry: {data['company']['industry']}
 
 📊 Technical Indicators:
-- RSI: {data['technical']['rsi']:.2f if data['technical']['rsi'] else 'N/A'}
-- 20-Day MA: ${data['technical']['moving_avg']['ma_20']:.2f if data['technical']['moving_avg']['ma_20'] else 'N/A'}
+- RSI: {f"{data['technical']['rsi']:.2f}" if data['technical']['rsi'] else 'N/A'}
+- 20-Day MA: ${f"{data['technical']['moving_avg']['ma_20']:.2f}" if data['technical']['moving_avg']['ma_20'] else 'N/A'}
 
 💡 Recommendation: {data['recommendation'].upper()}
 """

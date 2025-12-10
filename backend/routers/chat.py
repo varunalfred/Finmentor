@@ -3,9 +3,10 @@ Unified Chat Router - Supports Text, Voice, and Multimodal inputs
 """
 
 from fastapi import APIRouter, HTTPException, Depends, File, UploadFile, Form, BackgroundTasks
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List, Optional, Union
-from datetime import datetime
+from datetime import datetime, timezone
 import base64
 import io
 import os
@@ -87,6 +88,14 @@ class UploadResponse(BaseModel):
 # ============= System Initialization with Singletons =============
 
 hybrid_system = None
+
+def get_hybrid_system(db_session: AsyncSession):
+    """Singleton accessor for HybridFinMentorSystem"""
+    global hybrid_system
+    if hybrid_system is None:
+        # Initialize with database session
+        hybrid_system = HybridFinMentorSystem(db_session=db_session)
+    return hybrid_system
 # data_manager = None  # REMOVED: DataSourcesManager class doesn't exist
 
 # ============= Background Task Functions =============
@@ -131,7 +140,7 @@ def get_hybrid_system(db: AsyncSession = None) -> HybridFinMentorSystem:
         config = {
             "model": os.getenv("DEFAULT_MODEL", "gemini-2.0-flash-exp"),  # Configurable via env
             "temperature": float(os.getenv("DEFAULT_TEMPERATURE", "0.7")),
-            "max_tokens": int(os.getenv("DEFAULT_MAX_TOKENS", "1000")),
+            "max_tokens": int(os.getenv("DEFAULT_MAX_TOKENS", "4000")),
             "verbose": os.getenv("VERBOSE_LOGGING", "false").lower() == "true"
         }
         hybrid_system = HybridFinMentorSystem(config, db_session=db)
@@ -303,249 +312,157 @@ async def chat(
     Handles: text, voice, images, documents
     This is the single entry point for ALL financial queries
     """
+
+
+@router.post("", response_model=None)
+async def chat(
+    request: ChatRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Chat with FinMentor AI (Streaming + Persistence)
+    """
     try:
-        # Log incoming request for debugging
-        logger.info(f"Chat request ({request.input_type}): {request.message[:100]}...")
+        # === 1. Setup Conversation & User Message ===
+        from models.database import Conversation, Message
+        import uuid
+        from sqlalchemy import select
+        import json
 
-        # Start with the original message
+        # Get user profile
+        user_profile = {
+            "user_id": current_user.id,
+            "username": current_user.username,
+            "risk_tolerance": current_user.risk_tolerance,
+            "investment_goals": current_user.financial_goals,
+            "education_level": current_user.education_level,
+            "user_type": current_user.user_type
+        }
+
         processed_message = request.message
-        extracted_context = {}  # Will store additional context from multimodal inputs
+        logger.info(f"Chat request ({request.input_type}): {processed_message[:50]}...")
 
-        # === STEP 1: Process different input types ===
+        # Initialize Hybrid System
+        global hybrid_system
+        if hybrid_system is None:
+            hybrid_system = get_hybrid_system(db)
 
-        # Voice input - convert speech to text
-        if request.input_type == "voice" and request.voice_data:
-            # TODO: Implement actual STT (Whisper/Google Speech)
-            transcribed = await process_voice_input(request.voice_data)
-            processed_message = transcribed  # Use transcribed text
-            extracted_context["original_input"] = "voice"  # Remember it was voice
-
-        # Image input - extract visual information
-        elif request.input_type == "image" and request.image_data:
-            # TODO: Use multimodal LLM to analyze image
-            image_analysis = await process_image_input(request.image_data, request.message)
-            extracted_context.update(image_analysis)
-            # Append image context to the message
-            processed_message = f"{request.message} [Image context: {image_analysis}]"
-
-        # Document input - extract text from PDFs AND STORE IN PGVECTOR
-        elif request.input_type == "document" and request.document_data:
-            # Get conversation_id from request or create temporary one
-            conversation_id = getattr(request, 'conversation_id', user_id + "_conv")
-            filename = getattr(request, 'filename', "uploaded_document.pdf")
-            
-            doc_analysis = await process_document_input(
-                document_data=request.document_data,
-                filename=filename,
-                user_id=user_id,
-                conversation_id=conversation_id,
-                is_public=False,  # Default to private
-                db=db  # Pass database session for storage
-            )
-            extracted_context.update(doc_analysis)
-            # Append document preview to message
-            processed_message = f"{request.message} [Document: {doc_analysis.get('text_preview', '')[:200]}]"
-
-        # === STEP 2: Get AI system and retrieve context ===
-
-        # Get the hybrid AI system (singleton instance)
-        system = get_hybrid_system(db)  # Returns existing instance or creates new one
-
-        # Extract user ID for personalization
-        user_id = request.user_profile.get('user_id', 'default')  # Default ID if not provided
-
-        # Use Agentic RAG to understand intent and retrieve relevant context
-        # This fetches: past conversations, educational content, relevant data
-        rag_context = await rag_service.retrieve_and_generate_context(
-            query=processed_message,  # The user's query (possibly transcribed from voice)
-            user_id=user_id,  # For retrieving user-specific history
-            user_context=request.user_profile  # User's education level, preferences, etc.
-        )
-        # rag_context now contains:
-        # - intent (what user wants: MARKET_ANALYSIS, PORTFOLIO_ADVICE, etc.)
-        # - context (relevant past conversations, similar queries)
-        # - confidence score (how confident RAG is about the intent)
-
-        # Add RAG context for processing
-        extracted_context['rag_context'] = rag_context  # Store for later use
-
-        # === STEP 3: Process through multi-agent system ===
-
-        # Send to hybrid system for processing
-        # This will: classify complexity, select agents, execute, synthesize
-        result = await system.process_query(
-            query=processed_message,  # User's processed query
-            user_profile=request.user_profile,  # User's preferences and level
-            voice_input=(request.input_type == "voice"),  # True if user spoke the query
-            rag_context=rag_context  # Context from RAG (intent, history, etc.)
-        )
-        # result contains:
-        # - response: The text response to show the user
-        # - data: Any structured data (stock prices, calculations)
-        # - metadata: Processing details (agents used, confidence)
-        # - success: Whether processing succeeded
-        # - error: Any error message if failed
-
-        # === STEP 4: Store conversation in database ===
-
-        from models.database import Conversation, Message  # Import database models
-        import uuid  # For generating unique IDs
-        from datetime import datetime, timezone  # For timestamps
-        from sqlalchemy import select  # For querying database
-
-        # Get existing conversation ID or create new one
-        conversation_id = extracted_context.get('conversation_id', str(uuid.uuid4()))  # Continue or start new convo
-
-        # Check if conversation exists, create if not
+        # Get/Create Conversation
+        conversation_id = request.conversation_id or str(uuid.uuid4())
         result_query = await db.execute(
             select(Conversation).where(Conversation.id == conversation_id)
         )
         existing_conversation = result_query.scalar_one_or_none()
         
         if not existing_conversation:
-            # Create new conversation record
-            # Extract topic from RAG intent (e.g., "MARKET_ANALYSIS" -> "market_analysis")
-            intent = rag_context.get('intent', 'general').lower()
-            topic = intent if intent in ['stocks', 'education', 'planning', 'portfolio', 'market_analysis', 'risk'] else 'general'
-            
             conversation = Conversation(
                 id=conversation_id,
-                user_id=user_id,
-                title=processed_message[:100],  # Use first 100 chars as title
-                topic=topic,  # Set topic based on intent
+                user_id=current_user.id,
+                title=processed_message[:100],
+                topic="general",
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc)
             )
             db.add(conversation)
-            await db.flush()  # Ensure conversation is created before messages
+            await db.flush()
 
-        # Create user message record with all multimodal data
+        # Create User Message
         user_message = Message(
-            id=str(uuid.uuid4()),  # Generate unique message ID
-            conversation_id=conversation_id,  # Link to conversation thread
-            user_id=user_id,  # Who sent this message
-            role="user",  # Mark as user message (not assistant)
-            content=processed_message,  # The actual message text
-            input_type=request.input_type,  # Was it text/voice/image/document?
-            voice_data=request.voice_data if request.input_type == "voice" else None,  # Store voice data
-            image_data=request.image_data if request.input_type == "image" else None,  # Store image data
-            document_data=request.document_data if request.input_type == "document" else None,  # Store document data
-            created_at=datetime.now(timezone.utc)  # When message was sent
+            id=str(uuid.uuid4()),
+            conversation_id=conversation_id,
+            user_id=current_user.id,
+            role="user",
+            content=processed_message,
+            input_type=request.input_type,
+            created_at=datetime.now(timezone.utc)
         )
-        db.add(user_message)  # Add to database session (not saved yet)
+        db.add(user_message)
+        await db.commit() # Commit user message immediately
 
-        # Estimate token usage if not provided (rough: 1 token ≈ 4 chars for English)
-        tokens_estimate = None
-        if result.get("metadata", {}).get("tokens_used"):
-            tokens_estimate = result["metadata"]["tokens_used"]
-        else:
-            # Estimate: input tokens + output tokens
-            input_tokens = len(processed_message) // 4
-            output_tokens = len(result.get("response", "")) // 4
-            tokens_estimate = input_tokens + output_tokens
-        
-        # Create assistant response record with all metadata and structured data
-        assistant_message = Message(
-            id=str(uuid.uuid4()),  # Generate unique ID for response
-            conversation_id=conversation_id,  # Same conversation thread
-            user_id=user_id,  # Response is for this user
-            role="assistant",  # Mark as AI response
-            content=result.get("response", ""),  # The AI's response text
-            confidence_score=result.get("metadata", {}).get("confidence", 0.0),  # How confident AI is
-            model_used="gemini-2.5-flash-002",  # Which LLM generated this
-            processing_time=result.get("metadata", {}).get("processing_time"),  # How long processing took
-            tokens_used=tokens_estimate,  # Token usage (estimated if not provided)
-            response_data=result.get("data", {}),  # Structured data (prices, calculations, etc.)
-            created_at=datetime.now(timezone.utc)  # Response timestamp
-        )
-        db.add(assistant_message)  # Add to session
-
-        # Calculate basic sentiment from confidence and success
-        sentiment_score = result.get("metadata", {}).get("confidence", 0.5)
-        if not result.get("success", True):
-            sentiment_score = max(0.0, sentiment_score - 0.3)  # Lower sentiment on errors
-        
-        # Build conversation context from RAG and metadata
-        conversation_context = {
-            "last_intent": rag_context.get("intent", "general"),
-            "last_confidence": sentiment_score,
-            "cumulative_sentiment": sentiment_score,  # Will be averaged over time
-            "user_preferences": request.user_profile,
-            "last_updated": datetime.now(timezone.utc).isoformat()
-        }
-        
-        # Update conversation metadata
-        if existing_conversation:
-            # Update existing conversation
-            existing_conversation.total_messages = (existing_conversation.total_messages or 0) + 2  # +2 for user + assistant
-            existing_conversation.last_message_at = datetime.now(timezone.utc)
-            existing_conversation.updated_at = datetime.now(timezone.utc)
+        # === 2. Streaming Generator with Persistence ===
+        async def response_generator():
+            full_response = ""
+            completion_data = {}
             
-            # Update cumulative sentiment (running average)
-            old_context = existing_conversation.context or {}
-            old_sentiment = old_context.get("cumulative_sentiment", 0.5)
-            msg_count = existing_conversation.total_messages
-            new_sentiment = ((old_sentiment * (msg_count - 2)) + sentiment_score * 2) / msg_count
-            conversation_context["cumulative_sentiment"] = new_sentiment
-            existing_conversation.sentiment = new_sentiment
-            
-            # Merge new context with old context
-            existing_conversation.context = {**old_context, **conversation_context}
-        else:
-            # New conversation - set initial values
-            conversation.total_messages = 2  # First exchange
-            conversation.last_message_at = datetime.now(timezone.utc)
-            conversation.sentiment = sentiment_score
-            conversation.context = conversation_context
-        
-        # Commit messages and conversation updates
-        await db.commit()  # Save both messages to database
-        
-        # Check if we should prompt for satisfaction rating (every 50 conversations)
-        from sqlalchemy import select, func
-        user_conv_count = await db.execute(
-            select(func.count(Conversation.id)).where(Conversation.user_id == user_id)
-        )
-        total_convs = user_conv_count.scalar()
-        prompt_satisfaction = (total_convs % 50 == 0) if total_convs else False
+            try:
+                # Stream from Hybrid System
+                async for chunk_str in hybrid_system.stream_query(
+                    query=processed_message,
+                    user_profile=user_profile,
+                    voice_input=(request.input_type == "voice")
+                ):
+                    # Yield chunk to client immediately
+                    yield chunk_str
+                    
+                    # Process chunk for persistence
+                    try:
+                        chunk = json.loads(chunk_str)
+                        if chunk["type"] == "token":
+                            full_response += chunk["content"]
+                        elif chunk["type"] == "complete":
+                            completion_data = chunk["data"]
+                    except:
+                        pass
 
-        # Schedule background task to store embeddings using sentence-transformers (all-MiniLM-L6-v2)
-        # This runs after the response is sent, doesn't block user
-        background_tasks.add_task(
-            store_embeddings_background,
-            user_message.id,
-            assistant_message.id,
-            processed_message,
-            result.get("response", "")
-        )
+                # === 3. Save Assistant Response on Completion ===
+                # Create Assistant Message
+                assistant_message = Message(
+                    id=str(uuid.uuid4()),
+                    conversation_id=conversation_id,
+                    user_id=current_user.id,
+                    role="assistant",
+                    content=full_response,
+                    created_at=datetime.now(timezone.utc),
+                    confidence_score=completion_data.get("metadata", {}).get("confidence", 0.0),
+                    processing_time=completion_data.get("metadata", {}).get("processing_time"),
+                    response_data=completion_data.get("metrics", {})
+                )
+                db.add(assistant_message)
+                
+                # Update Conversation
+                # We need to re-fetch or merge because session might be different/expired in generator? 
+                # Actually, we are in the same request scope, so 'db' session is still valid until response closes.
+                
+                # Update conversation stats
+                if existing_conversation:
+                    existing_conversation.updated_at = datetime.now(timezone.utc)
+                    existing_conversation.last_message_at = datetime.now(timezone.utc)
+                    existing_conversation.total_messages = (existing_conversation.total_messages or 0) + 2
+                    db.add(existing_conversation)
+                else:
+                    # If we created it earlier, we might need to re-fetch if not attached? 
+                    # But db.add(conversation) was done.
+                    # To be safe, let's just update via SQL update if object not attached
+                    pass 
 
-        # Generate voice response if user prefers audio output
-        voice_response = None  # Default to no voice
-        if request.user_profile.get("preferred_output") == "voice":  # Check user preference
-            voice_response = await generate_voice_response(result.get("response", ""))  # Convert text to speech
+                await db.commit()
+                logger.info(f"Saved streaming response for conversation {conversation_id}")
+                
+                # Yield conversation ID update to frontend if needed (as a metadata chunk)
+                # The frontend already handles conversation_id from the first response if we sent it?
+                # Actually, we can send a final metadata chunk if we want.
+                yield json.dumps({
+                    "type": "metadata", 
+                    "content": {
+                        "conversation_id": conversation_id,
+                        "saved": True
+                    }
+                }) + "\n"
 
-        return ChatResponse(
-            success=result.get("success", True),  # Did processing succeed?
-            response=result.get("response", ""),  # Text response to show user
-            voice_response=voice_response,  # Base64 audio if generated
-            data={**result.get("data", {}), **extracted_context},  # Merge all data (prices, analysis, etc.)
-            metadata={  # Additional info about processing
-                **result.get("metadata", {}),  # Metadata from agents
-                "input_type": request.input_type,  # Record how user inputted query
-                "conversation_id": conversation_id,  # Return conversation_id so frontend can continue thread
-                "prompt_satisfaction_rating": prompt_satisfaction,  # Ask for rating every 50 convs
-                "sentiment_score": sentiment_score  # Current message sentiment
-            },
-            error=result.get("error")  # Any error message
+            except Exception as e:
+                logger.error(f"Error in streaming generator: {e}")
+                yield json.dumps({"type": "error", "content": str(e)}) + "\n"
+
+        # Use StreamingResponse
+        return StreamingResponse(
+            response_generator(),
+            media_type="application/x-ndjson"
         )
 
     except Exception as e:
-        logger.error(f"Chat error: {str(e)}")  # Log the error for debugging
-        return ChatResponse(
-            success=False,  # Mark as failed
-            response="I encountered an error processing your request.",  # Generic error message
-            error=str(e)  # Include actual error for debugging
-        )
+        logger.error(f"Error in chat endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ============= Simple/Test Endpoints =============
 
@@ -646,6 +563,7 @@ async def upload_audio(
 @router.get("/conversations")
 async def get_conversations(
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
     limit: int = 50,
     offset: int = 0
 ):
@@ -657,11 +575,16 @@ async def get_conversations(
         from models.database import Conversation
         from sqlalchemy import select, desc
         
+        logger.info(f"Fetching conversations for user: {current_user.id} ({current_user.username})")
+        
         # Query conversations ordered by most recent
-        query = select(Conversation).order_by(desc(Conversation.updated_at)).limit(limit).offset(offset)
+        query = select(Conversation).where(
+            Conversation.user_id == current_user.id
+        ).order_by(desc(Conversation.updated_at)).limit(limit).offset(offset)
         
         result = await db.execute(query)
         conversations = result.scalars().all()
+        logger.info(f"Found {len(conversations)} conversations for user {current_user.id}")
         
         # Format response
         conversation_list = []

@@ -14,7 +14,7 @@ const apiClient = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-  timeout: 10000, // ✅ Reduced to 10 seconds for better UX
+  timeout: 60000, // Increased to 60s for agentic operations
 });
 
 // Request interceptor - Add auth token to requests
@@ -257,6 +257,62 @@ const api = {
    * @param {object} userProfile - Optional user profile override
    * @param {string} inputType - Type of input (text, voice, image, document)
    */
+  /**
+   * Send a chat message with streaming support
+   * @param {Object} payload - { message, conversation_id, input_type, ... }
+   * @param {Function} onChunk - Callback for each chunk { type, content }
+   * @returns {Promise<void>}
+   */
+  streamChatMessage: async (payload, onChunk) => {
+    const token = localStorage.getItem('access_token');
+    const response = await fetch(`${API_BASE_URL}/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': token ? `Bearer ${token}` : '',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(errorText || 'Network response was not ok');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+
+      // Process all complete lines
+      buffer = lines.pop() || ''; // Keep the last incomplete line in buffer
+
+      for (const line of lines) {
+        if (line.trim()) {
+          try {
+            const chunk = JSON.parse(line);
+            onChunk(chunk);
+          } catch (e) {
+            console.warn('Error parsing stream chunk:', e);
+          }
+        }
+      }
+    }
+  },
+
+  /**
+   * Send a chat message to the AI (Legacy)
+   * @param {string} message - The message to send
+   * @param {string} conversationId - Optional conversation ID to continue existing thread
+   * @param {object} userProfile - Optional user profile override
+   * @param {string} inputType - Type of input (text, voice, image, document)
+   */
   sendChatMessage: async (message, conversationId = null, userProfile = null, inputType = 'text', documentId = null) => {
     try {
       const storedUser = api.getStoredUser();
@@ -273,7 +329,8 @@ const api = {
       const payload = {
         message,
         input_type: inputType,
-        user_profile: profile
+        user_profile: profile,
+        conversation_id: conversationId // Add conversation_id to top level
       };
 
       // If documentId is provided, add it to context or metadata
@@ -284,6 +341,8 @@ const api = {
         // Also append to message for clarity if needed, or backend handles it
       }
 
+      // Use streaming method internally if possible, or fallback to legacy
+      // For now, we keep legacy behavior for this method to avoid breaking changes
       const response = await apiClient.post('/chat', payload);
 
       return {

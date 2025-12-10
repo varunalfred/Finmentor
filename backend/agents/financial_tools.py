@@ -290,7 +290,7 @@ class FinancialTools:
             stats = {
                 "period": period,
                 "interval": interval,
-                "total_return": f"{((hist['Close'][-1] / hist['Close'][0] - 1) * 100):.2f}%",
+                "total_return": f"{((hist['Close'].iloc[-1] / hist['Close'].iloc[0] - 1) * 100):.2f}%",
                 "volatility": f"{(returns.std() * np.sqrt(252) * 100):.2f}%",
                 "avg_volume": int(hist['Volume'].mean()),
                 "price_range": f"${hist['Low'].min():.2f} - ${hist['High'].max():.2f}"
