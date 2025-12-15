@@ -538,11 +538,14 @@ class HybridFinMentorSystem:
 deep market knowledge with educational capabilities. You help users understand finance
 and make informed decisions.
 
+CRITICAL: You will often receive "RELEVANT CONTEXT" above the User Query. This context comes from the user's uploaded documents or your knowledge base.
+If the user asks "What is in the document?", you MUST use this context section to answer. Do NOT say you cannot see the document. The context IS the document content.
+
 You have access to the following tools:
 
 {tools}
 
-Use the following format:
+Format your response as follows:
 
 Question: the input question you must answer
 Thought: you should always think about what to do
@@ -552,6 +555,12 @@ Observation: the result of the action
 ... (this Thought/Action/Action Input/Observation can repeat N times)
 Thought: I now know the final answer
 Final Answer: the final answer to the original input question
+
+CRITICAL INSTRUCTION: If you do NOT need a tool (e.g., for greetings, general questions, or if you have enough context), you must SKIP the Action/Action Input/Observation steps.
+Example of NO TOOL usage:
+Question: Hi
+Thought: The user is greeting me.
+Final Answer: Hello! How can I help you today?
 
 Begin!
 
@@ -607,17 +616,22 @@ Thought: {agent_scratchpad}"""
                 # STEP 2: Get market context
                 market_context = await self._get_market_context()
                 
-                # Use DSPy context manager
-                lm = self._get_rotated_lm()
-                with dspy.context(lm=lm):
-                    result = self.dspy_reasoner(
-                        query_type="analyze",
-                        query=query,
-                        user_profile=json.dumps(self.user_profile),
-                        market_context=market_context,
-                        knowledge_base_context=kb_context,
-                        kb_relevance_score=str(kb_relevance) if kb_relevance is not None else "0.0"
-                    )
+                # Define retryable analysis task
+                async def _run_analysis():
+                    lm = self._get_rotated_lm()
+                    with dspy.context(lm=lm):
+                        return self.dspy_reasoner.forward(
+                            query_type="analyze",
+                            query=query,
+                            user_profile=json.dumps(self.user_profile),
+                            market_context=market_context,
+                            knowledge_base_context=kb_context,
+                            kb_relevance_score=str(kb_relevance) if kb_relevance is not None else "0.0"
+                        )
+                
+                # Execute with rotation fallback
+                rotator = get_rotator()
+                result = await rotator.execute_with_retry(_run_analysis)
 
                 # Track sources
                 sources = []
@@ -758,15 +772,20 @@ Confidence: {result.confidence}
 
             market_conditions = await self._get_market_conditions()
 
-            # Use DSPy context manager to avoid async configuration issues
-            lm = self._get_rotated_lm()
-            with dspy.context(lm=lm):
-                result = self.dspy_reasoner.forward(
-                    query_type="risk",
-                    investment=investment,
-                    user_profile=json.dumps(self.user_profile),
-                    market_conditions=market_conditions
-                )
+            # Define retryable risk task
+            async def _run_risk():
+                lm = self._get_rotated_lm()
+                with dspy.context(lm=lm):
+                    return self.dspy_reasoner.forward(
+                        query_type="risk",
+                        investment=investment,
+                        user_profile=json.dumps(self.user_profile),
+                        market_conditions=market_conditions
+                    )
+
+            # Execute with rotation fallback
+            rotator = get_rotator()
+            result = await rotator.execute_with_retry(_run_risk)
 
             return f"""
 ⚠️ Risk Assessment for {investment}
@@ -1034,7 +1053,8 @@ Investment Returns:
         query: str,
         user_profile: Dict[str, Any],
         voice_input: bool = False,
-        rag_context: Optional[Dict] = None
+        rag_context: Optional[Dict] = None,
+        history: Optional[List[Dict[str, str]]] = None
     ):
         """
         Stream the query processing, yielding thoughts and final answer tokens.
@@ -1065,11 +1085,34 @@ Investment Returns:
             request_lm = self.lm
 
         try:
-            # Step 1: RAG Context
+            # Step 1: Contextualize Query (If History Exists)
+            search_query = query
+            if history:
+                try:
+                    # Quick LLM call to rephrase query based on history
+                    hist_str = ""
+                    for h in history[-2:]: # Use last 2 turns
+                         hist_str += f"{h.get('role')}: {h.get('content')}\n"
+                    
+                    rephrase_prompt = f"""Given the chat history, rephrase the latest user query to be a standalone question that includes necessary context.
+History:
+{hist_str}
+User: {query}
+Standalone Question:"""
+                    
+                    # Use a fast call to the LLM
+                    rephrased = request_lm(rephrase_prompt)
+                    if rephrased and len(rephrased) > 5:
+                        search_query = rephrased[0].strip()
+                        yield json.dumps({"type": "thought", "content": f"Contextualized query: {search_query}"}) + "\n"
+                except Exception as cx_err:
+                     logger.warning(f"Failed to contextualize query: {cx_err}")
+
+            # Step 2: RAG Retrieval
             if not rag_context and self.agentic_rag and user_profile.get("user_id"):
                 yield json.dumps({"type": "thought", "content": "Searching knowledge base..."}) + "\n"
                 rag_context = await self.agentic_rag.retrieve_and_generate_context(
-                    query=query,
+                    query=search_query, # Use the standalone query
                     user_id=user_profile["user_id"],
                     user_context=user_profile
                 )
@@ -1077,47 +1120,148 @@ Investment Returns:
             # Step 2: Prepare Input
             enriched_query = query
             if rag_context and rag_context.get("context"):
-                context_str = "\n\nRelevant Context from Knowledge Base:\n"
-                for ctx in rag_context["context"][:3]:
-                    context_str += f"- {ctx.get('content', '')[:200]}...\n"
-                enriched_query = context_str + "\n\nUser Query: " + query
+                context_str = "\n\n=== RELEVANT CONTEXT FROM UPLOADED DOCUMENTS & KNOWLEDGE BASE ===\n"
+                for ctx in rag_context["context"][:5]:
+                    context_str += f"- {ctx.get('content', '')[:500]}...\n"
+                enriched_query = context_str + "\n\n=== END CONTEXT ===\n\nUser Query: " + query
             
             user_level = user_profile.get("education_level", "beginner")
             enriched_query = f"[User Level: {user_level}]\n\n{enriched_query}"
             
             agent_input = {"input": enriched_query}
+            
+            # Map history to LangChain format if provided
+            if history:
+                from langchain_core.messages import HumanMessage, AIMessage
+                chat_history = []
+                for msg in history:
+                    if msg.get("role") == "user":
+                        chat_history.append(HumanMessage(content=msg.get("content", "")))
+                    elif msg.get("role") == "assistant":
+                        chat_history.append(AIMessage(content=msg.get("content", "")))
+                agent_input["chat_history"] = chat_history
 
-            # Step 3: Stream Events
+            # Step 3: Stream Events with Rotation and Retry
             yield json.dumps({"type": "thought", "content": "Analyzing query..."}) + "\n"
             
-            with dspy.context(lm=request_lm):
-                async for event in self.agent_executor.astream_events(
-                    agent_input,
-                    version="v2"
-                ):
-                    kind = event["event"]
+            buffer = ""
+            final_answer_reached = False
+            
+            # Retry loop for rate limits
+            max_retries = 4
+            for attempt in range(max_retries):
+                try:
+                    # Use current agent executor
+                    executor_to_use = self.agent_executor
                     
-                    if kind == "on_chain_start":
-                        if event["name"] == "Agent":
-                            yield json.dumps({"type": "thought", "content": "Thinking..."}) + "\n"
+                    # If this is a retry (attempt > 0), ensure we have a fresh agent
+                    if attempt > 0:
+                        logger.warning(f"Retrying agent execution (attempt {attempt+1}) with rotated key...")
+                        try:
+                            from langchain_google_genai import ChatGoogleGenerativeAI
+                            from langchain.agents import create_react_agent, AgentExecutor
                             
-                    elif kind == "on_tool_start":
-                        tool_name = event["name"]
-                        tool_input = event["data"].get("input")
-                        yield json.dumps({"type": "thought", "content": f"Using tool: {tool_name}..."}) + "\n"
-                        
-                    elif kind == "on_tool_end":
-                        tool_output = event["data"].get("output")
-                        # Truncate long outputs for display
-                        output_str = str(tool_output)
-                        if len(output_str) > 100:
-                            output_str = output_str[:100] + "..."
-                        yield json.dumps({"type": "thought", "content": f"Tool result: {output_str}"}) + "\n"
+                            rotator = get_rotator()
+                            new_key = rotator.get_next_key()
+                            
+                            # Create fresh LLM
+                            new_llm = ChatGoogleGenerativeAI(
+                                model=self.config.get("model", "gemini-2.5-flash"),
+                                google_api_key=new_key,
+                                temperature=0,
+                                max_retries=1
+                            )
+                            # Re-bind tools
+                            try:
+                                new_llm.bind_tools(self.tools)
+                            except Exception:
+                                pass # Ignore binding errors on retry
+                                
+                            prompt = self._create_prompt()
+                            new_agent = create_react_agent(new_llm, self.tools, prompt)
+                            
+                            executor_to_use = AgentExecutor(
+                                agent=new_agent,
+                                tools=self.tools,
+                                verbose=self.config.get("verbose", False),
+                                max_iterations=5,
+                                handle_parsing_errors=True
+                            )
+                            
+                            # Update global state
+                            self.agent_executor = executor_to_use
+                            self.llm = new_llm 
+                            
+                        except Exception as rotation_err:
+                            logger.error(f"Failed to rotate agent: {rotation_err}")
+                            executor_to_use = self.agent_executor
 
-                    elif kind == "on_chat_model_stream":
-                        content = event["data"]["chunk"].content
-                        if content:
-                            yield json.dumps({"type": "token", "content": content}) + "\n"
+                    with dspy.context(lm=request_lm):
+                        async for event in executor_to_use.astream_events(
+                            agent_input,
+                            version="v2"
+                        ):
+                            kind = event["event"]
+                            
+                            if kind == "on_chain_start":
+                                if event["name"] == "Agent":
+                                    yield json.dumps({"type": "thought", "content": "Thinking..."}) + "\n"
+                                    
+                            elif kind == "on_tool_start":
+                                tool_name = event["name"]
+                                yield json.dumps({"type": "thought", "content": f"Using tool: {tool_name}..."}) + "\n"
+                                
+                            elif kind == "on_tool_end":
+                                tool_output = str(event["data"].get("output"))
+                                if len(tool_output) > 100: tool_output = tool_output[:100] + "..."
+                                yield json.dumps({"type": "thought", "content": f"Tool result: {tool_output}"}) + "\n"
+    
+                            elif kind == "on_chat_model_stream":
+                                content = event["data"]["chunk"].content
+                                if content:
+                                    buffer += content
+                                    if "Final Answer:" in buffer:
+                                        final_answer_reached = True
+                                        parts = buffer.split("Final Answer:", 1)
+                                        # Yield thought part
+                                        if parts[0].strip():
+                                            yield json.dumps({"type": "thought", "content": parts[0].strip()}) + "\n"
+                                        # Yield answer part
+                                        if len(parts) > 1 and parts[1]:
+                                            yield json.dumps({"type": "token", "content": parts[1]}) + "\n"
+                                        # Reset buffer for safety, though usually ends here
+                                        buffer = parts[1] if len(parts) > 1 else ""
+                                        
+                                    elif final_answer_reached:
+                                        yield json.dumps({"type": "token", "content": content}) + "\n"
+
+                            elif kind == "on_chain_error":
+                                logger.error(f"Chain error: {event}")
+
+                    # If successful, break retry loop
+                    break
+                    
+                except Exception as e:
+                    error_msg = str(e).lower()
+                    if ("rate limit" in error_msg or "429" in error_msg or "resource_exhausted" in error_msg):
+                        if attempt < max_retries - 1:
+                            yield json.dumps({"type": "thought", "content": f"⚡ Rate limit hit. Rotating API key (Attempt {attempt+1}/{max_retries})..."}) + "\n"
+                            continue
+                    
+                    # If not rate limit or max retries reached, handle final error
+                    logger.error(f"Error during streaming: {e}")
+                    yield json.dumps({"type": "token", "content": "I encountered an error processing your request. Please try again."}) + "\n"
+                    break
+                
+            # Ensure we flush buffer if check failed but flow finished
+            if not final_answer_reached and buffer:
+                # Cleanup: formatting might be messy, but better than nothing
+                clean_buffer = buffer.replace("Thought:", "").replace("Action:", "").replace("Final Answer:", "").strip()
+                yield json.dumps({"type": "token", "content": clean_buffer}) + "\n"
+                
+        except Exception as e:
+            logger.error(f"Error in stream_query: {e}")
+            yield json.dumps({"type": "token", "content": "I apologize, but I encountered an internal error. Please try again."}) + "\n"
 
             # Step 4: Yield Completion Data
             processing_time = (datetime.now() - start_time).total_seconds()

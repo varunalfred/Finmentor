@@ -1,0 +1,260 @@
+Total slides: 15
+
+================================================================================
+
+--- SLIDE 1 ---
+--------------------------------------------------------------------------------
+FINMENTOR AI - MULTIAGENT FINANCIALADVISORY PLATFORM
+Submitted by: 
+Roshan Varghese, 2448046
+Varun Dsouza, 2448059
+Under the Guidance of 
+Dr. Apash Roy
+Associate Professor
+Department of Data Science & Statistics
+--------------------------------------------------------------------------------
+
+--- SLIDE 2 ---
+--------------------------------------------------------------------------------
+Multiagent Financial Advisory Platform
+In modern times there are different asset classes to appreciate capital of an individual. Capital market is one such proven way. 
+NIFTY-50 which is the benchmark index of top 50 companies in India has generated a return of 10% CAGR. Where as many small cap companies have generated a hefty return of 15% to 18% in the same time.
+FinMentor AI MVP is a standalone web application designed to provide basic financial education and advisory services to Indian retain investors.
+The chatbot is designed to build sophisticated portfolio based on an investors risk perception.
+In addition to building portfolio, the application is capable of educating new investors and giving summary of annual reports.
+--------------------------------------------------------------------------------
+
+--- SLIDE 3 ---
+--------------------------------------------------------------------------------
+Problem Statement
+THE FINANCIAL LITERACY GAP IN INDIA
+Only 27% of Indian adults are financially literate (NCFE Survey 2023)
+Retail investors lack personalized guidance
+Traditional financial advisors are expensive (₹5000-10000/consultation)
+Generic investment apps don't educate users
+Information overload - 5500+ stocks on BSE, where to start?
+
+Real-World Impact:
+Poor investment decisions due to lack of knowledge
+Missed wealth creation opportunities
+Emotional investing (panic selling, FOMO buying)
+No understanding of risk-return tradeoffs
+
+Target Users: Young professionals (20-45) entering capital markets
+--------------------------------------------------------------------------------
+
+--- SLIDE 4 ---
+--------------------------------------------------------------------------------
+Why Existing Solutions Fall Short
+Robo-Advisors (Zerodha Coin, Groww):
+Automated portfolio suggestions
+No educational component
+One-size-fits-all approach
+No conversational interface
+
+Financial Chatbots (MoneyBot, Fina):
+Answer basic questions
+Limited to FAQs
+No portfolio building capability
+No context awareness
+
+
+Human Financial Advisors:
+Personalized advice
+Expensive (₹5000+/session)
+Not scalable
+Not available 24/7
+
+
+THE GAP: No solution combines education + advisory + personalization + 24/7 availability + affordable cost
+--------------------------------------------------------------------------------
+
+--- SLIDE 5 ---
+--------------------------------------------------------------------------------
+Project Objectives
+Intelligent multi-agent financial advisory: Creates a system with specialized AI agents that collaborate to provide comprehensive financial advice. Developed smart orchestration with dependency aware execution. 
+Context aware conversational memory: To build a system that remembers and learns from past conversations. Implement agentic RAG with PGVector semantic search. Intent classification with 6 query types.
+Real-time market integration: This provides accurate an up-to-date market data and analysis. Yahoo finance integration for live stock prices. Technical indicator calculations such as RSI, MACD, Moving average.
+Educational financial platform: Make financial literacy accessible to everyone. Angel one scraped data that contains more than 500 terms.
+--------------------------------------------------------------------------------
+
+--- SLIDE 6 ---
+--------------------------------------------------------------------------------
+Literature Review - Multi-Agent Systems in Finance
+1. Multi-Agent Trading Systems
+   Reference: Xiao et al. (2024) - "TradingAgents: Multi-agents 
+   LLM financial trading framework"
+   Key Findings:
+Specialized agents outperform single-agent systems
+Agent collaboration improves decision accuracy by 23%
+LLM-based agents can process unstructured financial data
+https://arxiv.org/abs/2412.20138
+
+2. RAG for Financial QA
+   Reference: Choi et al. (2025) - "FinDER: Financial dataset for 
+   question answering and evaluating RAG"
+   Key Findings:
+RAG improves factual accuracy in financial responses
+Retrieval-based methods reduce hallucinations
+Domain-specific knowledge bases essential
+https://arxiv.org/abs/2504.15800
+3. LLM-Based Portfolio Recommendations
+    Reference: Lopez-Lira, A., Scheer, M., & Schwenkler, G. (2024) - "Using Large Language Models for Financial Advice"
+    Key Findings:
+LLMs can generate implementable portfolio recommendations with specific securities and weights
+Foundation models generate portfolios more sensitive to investor characteristics than fine-tuned models
+https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4850039
+4. GenAI and Retail Investor Behavior
+    Reference: Cao, S., Jiang, W., & Wang, J. (2024) - "Generative AI and Investor Processing of Financial Information"
+Key Findings:
+Nearly 50% of retail investors already use GenAI for financial information processing
+GenAI enhances ability to process complex financial information quickly
+More sophisticated investors leverage GenAI for complex tasks more effectively
+https://papers.ssrn.com/sol3/papers.cfm?abstract_id=5053905
+--------------------------------------------------------------------------------
+
+--- SLIDE 7 ---
+--------------------------------------------------------------------------------
+System Architecture
+Frontend Layer: React web application
+Application layer: Fast API with python.
+Data layer: Sources
+Yahoo Finance - Free, real-time Indian market data
+Angel One - 538 financial terms scraped for education
+Alpha Vantage - Rate limits too restrictive
+NSE Direct API - Requires commercial license
+
+--------------------------------------------------------------------------------
+
+--- SLIDE 8 ---
+--------------------------------------------------------------------------------
+Data Collection & Processing (EDA)
+Data Source: Angel One Financial Glossary
+Method: Web scraping with Python (Selinium)
+
+Dataset Statistics:
+Total Terms: 538 financial terms
+Columns: term, definition, url, source
+Data Quality: 100% complete (no missing values)
+Duplicates: Removed during preprocessing
+
+Key Topics Covered (Word Cloud Analysis):
+Most Frequent: FINANCE, TRADING, TAXES, CREDIT, INSURANCE, STOCK, OPTION, FUTURE
+
+This forms our Educational Agent's knowledge base
+
+Content Analysis:
+Average Term Length: 15 characters     
+Average Definition: 784 characters     
+Consistency: 95% definitions 700-900 chars 
+
+Distribution:
+• Banking & Finance: 28%
+• Trading Instruments: 24%
+• Tax & Legal: 18%
+• Investment Products: 30%
+
+--------------------------------------------------------------------------------
+
+--- SLIDE 9 ---
+--------------------------------------------------------------------------------
+RAG architecture
+Intent Classifier
+Historical references: Past conversation recall
+Education Query: Learning financial concepts.
+Market analyser: Real time stock data.
+Portfolio advice: Investment recommendation.
+Risk assessment: Risk evaluation.
+Risk planner
+Creates retrieval strategy based on intent.
+Multi-source retriever
+PGVector- Semantic similarity.
+PostgreSLQ- Education content from angelone.
+External API such as Yahoo finance.
+--------------------------------------------------------------------------------
+
+--- SLIDE 10 ---
+--------------------------------------------------------------------------------
+Multi-Agent Design 
+1. Market technical agent: Analyses price charts, identifies trends and calculates technical indicators.
+2. Market sentimental agent: Gauges market psychology and investor sentiment from news and social media.
+3. Portfolio optimization agent: Optimizes portfolio allocation using Markowitz optimization and risk-return trade-offs.
+4. Dividend analysis agent: Evaluated dividend-paying stocks for suitable income generation.
+5. Risk assessment agent: Quantifies investment risk and identifies psychological biases.
+6. Tax implication agent: Analyses tax consequences of trades and suggests optimization strategies.
+7. Earning analysis agent : Analyse quarter earnings reports and forward guidance
+8. Economic Indicator Analysis: To interpret economic indicators such as GDP, CPI and unemployment.
+9. Concept explanation agent:: Explains complex financial concepts in simple accessible language.
+10. Personalized learning agent: Created customized learning paths based on user progress and goals.
+11. Behavioural detection agent: Identifies emotional biases affecting investment decisions.
+12. Psychological profiling agent: Profiles investor personality type and true risk tolerance.
+13. Financial analysis agent: Handels general financial questions and coordinates with specialized agents.
+--------------------------------------------------------------------------------
+
+--- SLIDE 11 ---
+--------------------------------------------------------------------------------
+Multi-Agent Design High Level Overview
+--------------------------------------------------------------------------------
+
+--- SLIDE 12 ---
+--------------------------------------------------------------------------------
+Multiagent Module
+Multi-Agent System Orchestrator Key Responsibilities
+Complex assessment: Classifies as simple, moderate, complex, critical.
+Agent selection: Maps query intent to required agents.
+Dependency resolution: Identifies which agents depend on others
+Rate limiting: Gemini 10 request/minute.
+Parallel execution: Independent agents run simultaneously.
+Result synthesis: Combines output from all agents.
+--------------------------------------------------------------------------------
+
+--- SLIDE 13 ---
+--------------------------------------------------------------------------------
+Technology Stack
+Backend Framework: FastAPI (Python 3.10+)
+Reason: Async support, fast, auto-generates API docs
+
+Database: PostgreSQL 
+
+AI/ML Components:
+Google Gemini API (gemini-1.5-flash) - Free tier, Query classification, response generation
+LangChain - Agent orchestration framework
+DSPY – Structured Reasoning AI Framework
+
+Security:
+Passwords: bcrypt hashing with salt
+API Authentication: JWT tokens 
+Environment variables for API keys
+
+[TABLE DETECTED]
+Component/Framework | Technology or Feature
+Frontend (Web) | React + Vite + Tailwind CSS
+Backend Framework | FastAPI (Python 3.9+)
+Database | PostgreSQL 14+
+ORM | SQLAlchemy
+Authentication | JWT (PyJWT library)
+LLM Framework | Google Gemini API (REST calls)
+Agent Framework | LangChain
+Market Data | yfinance Python library
+Deployment | Heroku / Railway / Render (free tier)
+Version Control | Git + GitHub
+DSPy | Structured reasoning AI framework (introduced 2023)
+--------------------------------------------------------------------------------
+
+--- SLIDE 14 ---
+--------------------------------------------------------------------------------
+Future Scope
+Multi-model agents: Full integration of chart analysis for a seamless, human-like interaction.
+Tax-Loss Harvesting Agent: A specialized agent to monitor portfolios and suggest tax-efficient trades.
+Mobile Application: Native React Native app for on-the-go portfolio management.
+Blockchain Integration: For verifying immutable audit trails of financial advice 
+Advanced Portfolio Optimization: Implementing Black-Litterman and Mean-Variance Optimization models for institutional-grade portfolio construction.
+--------------------------------------------------------------------------------
+
+--- SLIDE 15 ---
+--------------------------------------------------------------------------------
+Thank You
+--------------------------------------------------------------------------------
+
+================================================================================
+EXTRACTION COMPLETE

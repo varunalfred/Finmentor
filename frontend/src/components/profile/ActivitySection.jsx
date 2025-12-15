@@ -3,7 +3,7 @@ import { useActivity } from '../../hooks/useApi';
 import './ActivitySection.css';
 
 // API Base URL - uses environment variable or defaults to localhost
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
 const ActivitySection = () => {
   const [page, setPage] = useState(1);

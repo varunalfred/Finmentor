@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext';  // ✅ Import useAuth
 import './Profile.css';
 
 // API Base URL - uses environment variable or defaults to localhost
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
 // Import components directly
 import WatchlistSection from '../components/profile/WatchlistSection';

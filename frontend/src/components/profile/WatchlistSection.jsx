@@ -3,7 +3,7 @@ import { useWatchlist, useWatchlistStats } from '../../hooks/useApi';
 import './WatchlistSection.css';
 
 // API Base URL - uses environment variable or defaults to localhost
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
 const WatchlistSection = () => {
   // ✅ Use React Query hooks - automatic caching & 30s auto-refresh

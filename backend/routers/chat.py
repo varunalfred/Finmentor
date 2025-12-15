@@ -17,13 +17,16 @@ import logging
 from agents.smart_orchestrator import SmartMultiAgentOrchestrator
 from agents.hybrid_core import HybridFinMentorSystem
 from services.agentic_rag import AgenticRAG
-from services.database import get_db
+from services.database import get_db, db_service
 from models.database import User
 from models.document import UserDocument, DocumentChunk
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from routers.auth import get_current_user  # Import from routers.auth
+import uuid
 
+
+# ============= Helper Functions =============
 
 # ============= Helper Functions =============
 
@@ -214,7 +217,8 @@ async def process_document_input(
     user_id: str,
     conversation_id: str,
     is_public: bool = False,
-    db: AsyncSession = None
+    db: AsyncSession = None,
+    document_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Process document input (PDFs) - NOW WITH PERSISTENT STORAGE
@@ -239,7 +243,8 @@ async def process_document_input(
                 filename=filename,
                 user_id=user_id,
                 conversation_id=conversation_id,
-                is_public=is_public
+                is_public=is_public,
+                document_id=document_id
             )
             logger.info(f"Document storage result: {storage_result}")
         
@@ -258,41 +263,69 @@ async def process_document_input(
 
 # ============= Upload Endpoint =============
 
+async def background_document_ingestion(
+    document_data: str,
+    filename: str,
+    user_id: str,
+    conversation_id: str,
+    document_id: str
+):
+    """
+    Background Task: Processes document ingestion using its own DB session
+    """
+    logger.info(f"Starting background ingestion for {filename} ({document_id})")
+    try:
+        # separate session management for background task
+        async with db_service.AsyncSessionLocal() as session:
+            await process_document_input(
+                document_data=document_data,
+                filename=filename,
+                user_id=user_id,
+                conversation_id=conversation_id,
+                db=session,
+                document_id=document_id
+            )
+            logger.info(f"Background ingestion complete for {document_id}")
+            await session.commit()
+    except Exception as e:
+        logger.error(f"Background ingestion failed for {document_id}: {e}")
+
+
 @router.post("/upload", response_model=UploadResponse)
 async def upload_document(
     request: UploadRequest,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Upload and process a document in the background.
-    Returns a document_id that can be used in chat.
+    Returns a document_id IMMEDIATELY that can be used in chat.
+    Processing happens asynchronously.
     """
     try:
         user_id = str(current_user.id)
         conversation_id = request.conversation_id or f"{user_id}_temp"
         
-        result = await process_document_input(
+        # 1. Generate ID upfront
+        document_id = str(uuid.uuid4())
+        
+        # 2. Offload to background task (Pass data, NOT the request-scoped session)
+        background_tasks.add_task(
+            background_document_ingestion,
             document_data=request.document_data,
             filename=request.filename,
             user_id=user_id,
             conversation_id=conversation_id,
-            db=db
+            document_id=document_id
         )
-        
-        if "error" in result:
-            raise HTTPException(status_code=400, detail=result["error"])
             
-        # Extract document_id from storage_info if available
-        document_id = None
-        if result.get("stored") and result.get("storage_info"):
-            document_id = result["storage_info"].get("document_id")
-            
+        # 3. Return immediate success
         return UploadResponse(
             success=True,
-            document_id=str(document_id) if document_id else None,
+            document_id=document_id,
             filename=request.filename,
-            message="Document processed successfully"
+            message="Document processing started in background"
         )
         
     except Exception as e:
@@ -317,6 +350,7 @@ async def chat(
 @router.post("", response_model=None)
 async def chat(
     request: ChatRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -366,6 +400,20 @@ async def chat(
             )
             db.add(conversation)
             await db.flush()
+            
+            # LINKING ORPHAN DOCUMENTS: 
+            # If this is a new conversation and we have a document_id in context, 
+            # update that document to belong to this conversation.
+            if request.context and request.context.get("document_id"):
+                doc_id = request.context.get("document_id")
+                # Update UserDocument conversation_id
+                await db.execute(
+                    update(UserDocument)
+                    .where(UserDocument.id == doc_id)
+                    .where(UserDocument.user_id == current_user.id)
+                    .values(conversation_id=conversation_id)
+                )
+                logger.info(f"Linked document {doc_id} to new conversation {conversation_id}")
 
         # Create User Message
         user_message = Message(
@@ -380,6 +428,32 @@ async def chat(
         db.add(user_message)
         await db.commit() # Commit user message immediately
 
+        # Generate embedding for user message in background
+        if hybrid_system.agentic_rag:
+            background_tasks.add_task(
+                hybrid_system.agentic_rag.store_message_embedding,
+                user_message.id,
+                user_message.content
+            )
+
+        # Fetch History for Context
+        history = []
+        if existing_conversation:
+            # Get last 10 messages
+            history_query = select(Message).where(
+                Message.conversation_id == conversation_id
+            ).order_by(Message.created_at.desc()).limit(10)
+            
+            history_result = await db.execute(history_query)
+            # Reverse to get chronological order
+            raw_history = history_result.scalars().all()[::-1]
+            
+            for msg in raw_history:
+                history.append({
+                    "role": msg.role,
+                    "content": msg.content
+                })
+
         # === 2. Streaming Generator with Persistence ===
         async def response_generator():
             full_response = ""
@@ -390,7 +464,8 @@ async def chat(
                 async for chunk_str in hybrid_system.stream_query(
                     query=processed_message,
                     user_profile=user_profile,
-                    voice_input=(request.input_type == "voice")
+                    voice_input=(request.input_type == "voice"),
+                    history=history  # Pass the history we just fetched
                 ):
                     # Yield chunk to client immediately
                     yield chunk_str
@@ -438,6 +513,16 @@ async def chat(
 
                 await db.commit()
                 logger.info(f"Saved streaming response for conversation {conversation_id}")
+                
+                # Generate embedding for assistant message (Better Way: RAG-enabled memory)
+                if hybrid_system.agentic_rag:
+                    try:
+                        await hybrid_system.agentic_rag.store_message_embedding(
+                            assistant_message.id,
+                            assistant_message.content
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to generate embedding for assistant response: {e}")
                 
                 # Yield conversation ID update to frontend if needed (as a metadata chunk)
                 # The frontend already handles conversation_id from the first response if we sent it?
@@ -595,6 +680,7 @@ async def get_conversations(
                 "title": conv.title,
                 "topic": conv.topic,
                 "total_messages": conv.total_messages,
+                "is_public": conv.is_public,
                 "created_at": conv.created_at.isoformat() if conv.created_at else None,
                 "updated_at": conv.updated_at.isoformat() if conv.updated_at else None,
                 "last_message_at": conv.last_message_at.isoformat() if conv.last_message_at else None
@@ -662,6 +748,7 @@ async def get_conversation_messages(
             "conversation": {
                 "id": conversation.id,
                 "title": conversation.title,
+                "is_public": conversation.is_public,
                 "created_at": conversation.created_at.isoformat() if conversation.created_at else None
             },
             "messages": message_list,
@@ -937,18 +1024,24 @@ async def get_public_conversations(
 
 @router.get("/documents/mine")
 async def get_my_documents(
-    db: AsyncSession = Depends(get_db)
+    conversation_id: str = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
-    """Get all documents uploaded by current user"""
+    """Get documents uploaded by current user, optionally filtered by conversation"""
     try:
         from models.document import UserDocument
         from sqlalchemy import select
         
-        # TODO: Get user_id from authenticated user
-        # For now, this will return all documents
-        # You should add authentication to get the actual user_id
+        query = select(UserDocument).where(
+            UserDocument.user_id == current_user.id
+        )
         
-        query = select(UserDocument).order_by(UserDocument.upload_date.desc())
+        # Filter by conversation if provided
+        if conversation_id:
+            query = query.where(UserDocument.conversation_id == conversation_id)
+            
+        query = query.order_by(UserDocument.upload_date.desc())
         
         result = await db.execute(query)
         documents = result.scalars().all()
@@ -1063,3 +1156,53 @@ async def upvote_conversation(
         logger.error(f"Error upvoting: {e}")
         await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+async def summarize_conversation_title(conversation_id: str, db: AsyncSession):
+    """
+    Background task to generate a concise 3-5 word title for the conversation.
+    """
+    from models.database import Conversation, Message
+    from agents.hybrid_core import get_hybrid_system
+    from sqlalchemy import select, update
+    
+    try:
+        # Get conversation & first few messages
+        query = select(Message).where(Message.conversation_id == conversation_id).order_by(Message.created_at.asc()).limit(3)
+        result = await db.execute(query)
+        messages = result.scalars().all()
+        
+        if not messages:
+            return
+
+        # Prepare prompt
+        transcript = "\n".join([f"{m.role}: {m.content}" for m in messages])
+        prompt = f"""Summarize the following conversation start into a very short title (max 5 words).
+ conversation:
+ {transcript}
+ 
+ Title:"""
+        
+        # Use LLM to generate title
+        hybrid_system = get_hybrid_system(db)
+        if hybrid_system:
+             # We use the internal LLM directly if possible, or a simplified call
+             # For now achieving this via the configured LLM in hybrid system
+             try:
+                 title = hybrid_system.lm(prompt)
+                 if isinstance(title, list): title = title[0]
+                 title = title.strip().strip('"')
+                 
+                 # cleanup
+                 if len(title) > 60: title = title[:60] + "..."
+                 
+                 # Update DB
+                 await db.execute(
+                     update(Conversation)
+                     .where(Conversation.id == conversation_id)
+                     .values(title=title)
+                 )
+                 await db.commit()
+             except Exception as llm_err:
+                 print(f"Title generation failed: {llm_err}")
+                 
+    except Exception as e:
+        print(f"Background title summary error: {e}")

@@ -1,0 +1,566 @@
+﻿Multimodal Farmer Advisory Chatbot                                                                                                           
+
+
+FINMENTOR AI - MULTIAGENT FINANCIAL ADVISORY PLATFORM 
+
+
+
+
+
+
+by 
+
+
+
+
+Roshan Varghese 2448046
+Varun Alfred Dsouza 2448059
+
+
+
+
+
+
+Under the guidance of 
+Dr. Apash Roy
+
+
+
+
+
+
+  
+
+
+
+
+
+A Project report submitted in partial fulfilment of the requirements for the award of the degree of Master of Science (Data Science) of CHRIST (Deemed to be University)
+
+
+
+
+December – 2025
+
+
+
+
+CERTIFICATE
+
+
+
+
+ This is to certify that the report titled FinMentor AI - Multiagent Financial Advisory Platform is a bonafide record of work done by Roshan Varghese (2448046) of CHRIST (Deemed to be University), Bengaluru, in partial fulfillment of the requirements of V Trimester MSc (Data Science) during the academic year 2025-26.
+       
+
+
+
+
+
+
+Head of the Department                                         Project Guide
+
+
+
+
+Valued-by
+1.
+	
+
+	Name
+	:Roshan Varghese
+
+
+	
+
+	
+
+	Register Number
+	:2448046
+
+
+	2.
+	
+
+	Date of Exam
+	:06/12/2025
+
+
+	
+
+ACKNOWLEDGMENTS
+
+
+
+
+ABSTRACT
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+TABLE OF CONTENTS
+
+
+ACKNOWLEDGMENTS        3
+ABSTRACT        4
+TABLE OF CONTENTS        5
+LIST OF FIGURES        7
+ABBREVIATIONS        8
+1. INTRODUCTION        1
+1.1. BACKGROUND AND MOTIVATION        1
+1.2 PROBLEM STATMENT        1
+1.3 OBJECTIVES        2
+1.4  SCOPE OF THE PROJECT        3
+2. LITERATURE REVIEW        3
+2.1 EXISTING FINANCIAL AI SYSTEMS        3
+2.2  MULTI-AGENT SYSTEM IN FINANCE        4
+2.3 RETRIEVAL-AUGMENTED GENERATION (RAG)        6
+2.4 LARGE LANGUAGE MODELS FOR FINANCE        6
+2.5 GAP ANALYSIS: LIMITATIONS AND OPPORTUNITIES        7
+3. SYSTEM DESIGN        8
+3.1 SYSTEM ARCHITECTURE        8
+3.3 MODULE DESIGN        10
+2. SYSTEM DESIGN        11
+2.1. SYSTEM ARCHITECTUR        11
+3. IMPLEMENTATION        11
+3.1. IMPLEMENTATION APPROACHES        11
+4. TESTING        11
+4.1. TEST CASES        11
+4.1.1. FRONTEND-BASED TESTING CASES        11
+4.1.2. INTEGRATION TESTING CASES        11
+4.1.3. SYSTEM-LEVEL TESTING CASES        11
+4.2. TESTING REPORTS        11
+4.2.1. FRONTEND TESTING RESULTS        11
+4.2.2. SYSTEM INTEGRATION TESTING RESULTS        12
+5. CONCLUSIONS        12
+5.1. DESIGN AND IMPLEMENTATION ISSUES        12
+5.1.1. TECHNICAL CHALLENGES ENCOUNTERED        12
+5.1.2. USER EXPERIENCE AND ACCESSIBILITY CHALLENGES        12
+5.2. ADVANTAGES AND LIMITATIONS        12
+5.2.1. SYSTEM ADVANTAGES        12
+5.2.2. SYSTEM LIMITATIONS        12
+5.3. FUTURE SCOPE OF THE PROJECT        12
+5.3.1. TECHNICAL ENHANCEMENT OPPORTUNITIES        12
+5.3.2. LONG-TERM VISION AND GOALS        12
+REFERENCES        13
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+LIST OF FIGURES
+
+
+List Of Images
+* Figure 1. Block Diagram
+* Figure 2. Architecture
+* Figure 3. Flow of Scheme Agent
+* Figure 4. Flow of Price Agent
+* Figure 5. Flow of Pest Agent
+* Figure 6. ER Diagram
+* Figure 7. Class Diagram
+* Figure 8. Default Page 
+* Figure 9. Crop Price Dashboard
+* Figure 10. Crop Disease Dashboard
+* Figure 11. Login Page
+* Figure 12. Signup Page
+* Figure 13. Admin Panel Page
+* Figure 14. Entering the details for the forecast
+* Figure 15. Forecast Generation
+* Figure 16. Uploading the crop image
+* Figure 17. Analysing and generating the results
+* Figure 18. Generating the Response from the System
+* Figure 19. User Registration
+* Figure 20. Details are Stored in the Postgres DB
+* Figure 21. Coordinator routing and Generating response form the respective Agent
+	
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ABBREVIATIONS
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+1. INTRODUCTION
+
+
+   1. BACKGROUND AND MOTIVATION
+Financial literacy and effective portfolio management remain significant challenges for individual investors, particularly beginners entering the investment landscape. Traditional financial advisory services are often expensive, lack personalization, or require substantial minimum investments, creating a barrier for many individuals seeking financial guidance. Furthermore, the complexity of financial markets, coupled with the abundance of information available, can overwhelm novice investors, leading to suboptimal investment decisions or complete avoidance of financial planning.
+The emergence of Large Language Models (LLMs) and artificial intelligence has opened new possibilities for democratizing financial advice. However, existing AI-powered financial tools often suffer from limitations:
+1. Single-agent architectures that cannot provide comprehensive, multi-faceted analysis
+2. Lack of specialization in different financial domains (risk assessment, portfolio optimization, behavioral finance)
+3. Limited context awareness without proper retrieval mechanisms for personalized advice
+4. Generic responses that fail to consider user-specific risk tolerance, goals, and experience levels.
+
+
+FinMentor AI addresses these gaps by introducing a multi-agent orchestration system that combines the reasoning capabilities of Large Language Models with specialized financial agents, retrieval-augmented generation (RAG), and real-time market data integration. The system provides comprehensive, personalized financial guidance through an intelligent conversational interface.
+        1.2        PROBLEM STATMENT
+1. Primary Problem: Individual investors, especially beginners, lack access to affordable, comprehensive, and personalized financial guidance that considers multiple aspects of investment decision-making including risk assessment, portfolio optimization, tax implications, and behavioral biases.
+2. Complexity of Financial Decision-Making: Investment decisions require analysis across multiple dimensions. No single source provides integrated, comprehensive analysis.
+3. Lack of Personalization: Generic financial advice fails to account for individual risk tolerance, investment goals, and knowledge levels.
+4. Accessibility Barriers: Professional financial advisors are expensive. Robo-advisors often require minimum investments. Financial literacy resources are scattered and fragmented.
+5. Information Overload: Investors face overwhelming amounts of financial data and news. Difficulty in filtering relevant information for decision-making.
+6. Behavioral Biases: Investors are prone to emotional decision-making, confirmation bias, and loss aversion. Lack of tools to identify and mitigate these biases.
+1.3        OBJECTIVES
+                1.3.1 PRIMARY OBJECTIVE
+To design and implement FinMentor AI, an intelligent, multi-agent financial portfolio assistant that provides comprehensive, personalized investment guidance through a conversational interface, leveraging Large Language Models, retrieval-augmented generation, and real-time market data integration.
+1.3.2 SECONDARY OBJECTIVE
+1. Design and implement specialized financial agents covering:
+   1. General financial analysis.
+   2. Risk assessment and management.
+   3. Portfolio optimization.
+   4. Technical and fundamental analysis.
+   5. Market sentiment analysis.
+   6. Tax implications.
+   7. Behavioral bias detection.
+   8. Educational support.
+1. Retrieval-Augmented Generation (RAG):Builds a comprehensive financial education knowledge base.Implement vector-based similarity search using PGVector.Integrate conversation history for context-aware responses.
+2. Real-Time Data Integration: Integrate market data APIs (yfinance) for real-time stock information.Implement technical indicator calculations.Incorporate news sentiment analysis.
+3. Personalization:User profile management. Context-aware query understanding. Adaptive response complexity based on user knowledge.
+4. System Optimization: Rate-limited API orchestration to comply with free-tier limits. Efficient sequential/parallel agent execution. Optimized RAG retrieval strategies.
+5. Usability: Intuitive conversational interface. Real-time response streaming. 
+        1.4         SCOPE OF THE PROJECT
+                Core Functionality include: 
+* User authentication and profile management.
+* Conversational AI interface for natural language queries.
+* Multi-agent financial analysis system with 13 specialized agents.
+* RAG-based knowledge retrieval for educational content.
+* Real-time stock market data integration.
+* Portfolio analysis and optimization recommendations.
+* Risk assessment and management guidance.
+                Technical Implementation
+* Python FastAPI backend.
+* React + Vite frontend.
+* PostgreSQL with PGVector extension.
+* Redis caching layer.
+* Google Gemini 2.5 Flash LLM.
+* DSPy + LangChain hybrid architecture.
+* Multi-agent orchestration with dependency graph.
+* Rate-limited API execution
+* Vector embeddings for semantic search.
+                Data Source
+* Yahoo Finance.
+* Angel one technical terms.
+* User conversational history.
+* Market indicators and technical analysis.
+
+
+                2.        LITERATURE REVIEW
+        2.1        EXISTING FINANCIAL AI SYSTEMS
+                Commercial Solutions
+Commercial financial AI solutions have evolved significantly in recent years, encompassing robo-advisors, chatbots, and automated trading platforms that leverage various technological approaches to democratize financial services[1]. Robo-advisors represent a major category of automated investment management systems that provide portfolio recommendations based on investor profiles, risk preferences, and financial goals. These platforms typically employ rule-based algorithms and quantitative models to construct and rebalance portfolios.
+
+
+Traditional chatbots in the financial sector are designed to handle customer inquiries, provide basic financial information, and assist with routine transactions. However, these early systems often suffer from limitations in handling complex financial queries and lack the ability to provide contextual, nuanced advice[2]. Recent advancements have introduced generative AI-powered chatbots that can process natural language queries and generate more sophisticated financial insights. A comprehensive survey of 2,175 retail investors reveals that nearly half of surveyed investors are already using generative AI for gathering and interpreting financial or market data[3]. 
+
+
+Academic Research Systems
+Academic research has explored various approaches to building intelligent financial systems. Early systems focused on sentiment analysis from news and social media to predict market movements. More recent research has concentrated on developing specialized Large Language Models (LLMs) fine-tuned on financial data, such as FinGPT, PIXIU (FinMA), and BloombergGPT[1].        
+Fine-tuned LLMs demonstrate significant improvements in domain-specific tasks compared to their base versions. For example, PIXIU outperformed open-source models like BLOOM and OPT in financial sentiment analysis tasks. However, studies show that while these specialized models excel in classification tasks, they perform similarly or slightly worse than general-purpose models like GPT-4 in generative tasks requiring complex financial reasoning[1].
+2.2         MULTI-AGENT SYSTEM IN FINANCE
+                Agent Architectures
+Multi-agent LLM frameworks represent a significant advancement in financial AI by simulating the collaborative decision-making processes of real trading firms. The TradingAgents framework exemplifies this approach by organizing specialized agents with distinct roles, mirroring the structure of professional trading organizations[1].
+
+
+The framework employs a hierarchical agent architecture comprising several distinct teams:
+* Fundamental Analysts evaluate company financial statements, earnings reports, and insider transactions to assess intrinsic value.
+* Sentiment Analysts process social media posts and sentiment scores to gauge market sentiment.
+* News Analysts analyze news articles and macroeconomic indicators to identify market-moving events.
+* Technical Analysts calculate technical indicators (MACD, RSI, Bollinger Bands) to forecast price movements[1].
+Researcher Team: Composed of bullish and bearish researchers who engage in structured debates to evaluate investment opportunities from opposing perspectives, providing balanced market assessment[1].
+Trader Agents: Execute trading decisions based on comprehensive analysis from analysts and researchers, determining timing and size of trades while balancing potential returns against risks[1].
+Risk Management Team: Monitors portfolio exposure from three perspectives (risk-seeking, neutral, and risk-conservative), ensuring trading activities remain within predefined risk parameters[1].
+Fund Manager: Reviews risk management deliberations and approves final trading decisions with appropriate adjustments[1].
+Coordination Strategies
+Traditional multi-agent systems in finance have relied heavily on natural language communication through unstructured message histories or pools of information. However, this approach often results in information degradation over extended decision sequences, similar to a "telephone effect" where details are lost and states become corrupted[1].
+TradingAgents addresses this limitation through a hybrid communication protocol that combines structured outputs with natural language dialogue. This innovative coordination strategy operates as follows:
+Structured Communication: Analyst reports, trader decision documents, and risk assessments are maintained as structured entries in a global agent state. Each agent queries the necessary information directly from this shared state rather than relying on conversational history[1].
+Focused Natural Language Dialogue: Natural language communication is reserved exclusively for agent-to-agent debates and discussions among the Researcher and Risk Management teams. These focused, multi-round discussions promote deeper reasoning and integrate diverse perspectives while avoiding the information loss inherent in long conversational exchanges[1].
+ReAct Framework Implementation: All agents employ the ReAct (Reasoning + Acting) prompting framework, which synergizes reasoning and acting within a shared environment context. This enables agents to take context-appropriate actions such as conducting research, executing trades, or managing risks[1].
+
+
+        2.3        RETRIEVAL-AUGMENTED GENERATION (RAG)
+                RAG Fundamentals
+Retrieval-Augmented Generation (RAG) is a technique that augments Large Language Models with external knowledge by retrieving and integrating relevant documents into the response generation process[2]. RAG addresses fundamental limitations of LLMs in finance by combining the semantic understanding capabilities of language models with the precision of information retrieval systems.
+
+
+The basic RAG pipeline operates as follows: Given a user query, a retrieval component searches a document corpus to identify relevant passages. These passages are then provided as context to an LLM for answer generation, enabling the model to produce responses grounded in external knowledge rather than relying solely on training data[2].
+
+
+RAG has become essential for financial question-answering because while state-of-the-art LLMs like GPT-4-turbo achieve only 9% accuracy on financial queries in closed-book settings, providing relevant context dramatically improves performance[2]. The FINDER dataset evaluation demonstrates that models receiving perfect context achieve correctness scores of 59.69% to 68.13%, compared to only 9.37% to 10.14% without context[2]. The FinDER (Financial Dataset for Evaluating RAG) benchmark, consisting of 5,703 expert-annotated query-evidence-answer triplets from real-world financial inquiries, demonstrates the practical challenges and opportunities in this domain[2].
+        2.4        LARGE LANGUAGE MODELS FOR FINANCE
+                GPT Models, Gemini, and Claude
+The capabilities of leading LLMs for financial applications have been extensively evaluated across multiple dimensions. GPT-3.5, GPT-4, GPT-o1, and Claude are among the most prominent models tested in financial contexts[1][2][3].
+
+
+Foundation Model Performance
+Research on financial advice generation reveals that larger foundation models (e.g., GPT-4) generate portfolios that are more sensitive to investor characteristics, easier to implement, and more aligned with best practices than smaller or fine-tuned models[3]. When evaluating portfolio recommendations across 64 investor profiles differing in risk preferences, country, sustainability preferences, gender, and investment experience, GPT-4 produces recommendations with historical performance comparable to professionally managed benchmark portfolios[3].
+
+
+Multi-LLM Comparison in Financial QA: In the FINDER evaluation, different LLMs demonstrate varying strengths:
+* GPT-o1: Excels in arithmetic operations (Multiplication: 42.90%, Division: 27.78%) with strong faithfulness (80.33%-84.15%)
+* Claude-3.7-Sonnet: Achieves highest faithfulness scores (85.46% in qualitative tasks) and good arithmetic performance.
+* Qwen-QWQ: Demonstrates strong performance in specialized domains (Legal: 80.22%, Risk: 80.32%).
+* Deepseek-R1-Distill: Shows category-specific strengths (Accounting: 84.71%), balancing reasoning with efficiency[2].
+No single model universally dominates across all financial reasoning tasks, suggesting that architectural nuances significantly influence performance on specific tasks[2].
+        2.5        GAP ANALYSIS: LIMITATIONS AND OPPORTUNITIES
+                Limitations of Existing Systems
+Despite significant progress, current financial AI systems face several critical limitations:
+1. Limited Organizational Realism: Most existing multi-agent frameworks fail to capture the complex interactions and organizational structures of real trading firms. Traditional systems focus narrowly on specific task performance (sentiment analysis, price prediction, or news processing) without integrating the established workflows and human operating procedures proven effective in professional trading environments[1]. This fragmented approach limits their ability to replicate real-world trading practices and organizational decision-making processes.
+2. Inefficient Communication Interfaces: Heavy reliance on natural language communication through message histories or unstructured information pools leads to significant information degradation over extended decision sequences[1]. The "telephone effect"—where details are lost and states become corrupted as conversations lengthen—impairs agent effectiveness in handling complex, dynamic tasks. Agents struggle to maintain context while filtering irrelevant information from previous decision steps, diminishing their capacity to handle sophisticated financial reasoning[1].
+3. Hallucination and Factual Inaccuracy: LLMs struggle with factual correctness in financial domains without proper context. GPT-4-turbo achieved only 9% accuracy on financial questions in closed-book settings, with 91% of responses being incorrect or unanswered[2]. Even with context, models typically achieve only 30%-34% correctness on qualitative financial reasoning tasks, rising to 59%-68% only with high-quality, expertly-selected context[2].
+4. Query Ambiguity and Domain-Specific Language: Existing retrieval systems struggle with the brevity, ambiguity, and specialized terminology common in real-world financial queries[2]. Financial queries frequently contain multiple acronyms and domain-specific expressions—43.45% of real financial queries contain 3-4 domain-specific terms, and 46.41% contain 5 or more[2].
+5. Variable Performance Across Financial Reasoning Types: LLMs demonstrate inconsistent capabilities across different financial reasoning tasks. Compositional reasoning (requiring integration of multiple information sources) achieves only 19-20% correctness, while arithmetic operations vary from 15-42% depending on operation type[2]. 
+
+
+3.        SYSTEM DESIGN        
+
+
+                3.1        SYSTEM ARCHITECTURE
+                        3.1.1 HIGH LEVEL ARCHITECTURE
+                          
+                        3.1.2 COMPONENT INTERACTION FLOW
+                                  
+                                                        
+3.1.3 ENTITY- RELATIONSHIP DIAGRAM 
+  
+
+                        3.1.4    DATABASE SCHEMA
+                                
+* Table users: Stores core authentication and identity details for each registration user. Provides the base account record required for login, security and linking all other user-specific data.
+* Table user_profiles: Stores the users investments preferences, experience, and financial profile. This enables personalization of recommendations, risk based portfolio suggestions and adaptive tutoring or guidance.
+* Table conversations: This tracks each conversations session the user has with the system. Allows groping messages, retriving past interactions and improving continuing.
+* Table messages: Stores each individual message exchange, along with vector embeddings for semantic search. Enables RAG workflows, conversation retrieval, semantic queries, and metadata-based response tuning.
+* Table education_content: Stores curated education articles, concepts and guides that power retrieval-augmented learning. It provides a structured knowledge base for the tutoring system, enabling high quality answers using semantic vector search.
+        3.3        MODULE DESIGN 
+                3.3.1    AUTHENTICATION AND USER MANAGMENT MODULE
+1. To secure user registration, login session management. The components include:
+   1. Auth .py - JWT token generation 
+   2. Users. py-User CRUD operations.
+   3. Dependencies. py-Auth dependency injection.
+2. Security
+   1. Password hashed with bcrypt.
+   2. JWT tokens with 60-minute expiration.
+   3. HTTP-only cookies for token storage.
+   4. CORS protection.
+                3.3.2    CONVERSATIONAL AI MODULE
+1. Process user queries through intelligent multi agent system.
+
+
+  
+
+2. Key classes
+   1. Initilizes 13 specialized DSPy agents.
+   2. Creates LangChain tools for each agent.
+   3. Manages react agent executor.
+   4. DSPy financial reasoner.        
+                3.3.3   Multi-Agent Orchastration Module.
+The main purpose is to coordinate multiple specialized agents with dependency management and rate limiting.
+Key Components
+* The responsibilities include assess query complexity. Select appropriate agents based in intent and complexity. Manage agent dependencies. To execute in stages with rate limiting.
+* An Agent Dependency graph is a directed graph that shows how different agents in a system depend on one another to complete task.
+* Rate limiter: The token bucket algorithm limits request rates by allowing actions only when enough tokens are available, enabling controlled burst and long-term throughput.
+* 10 minutes tokens per minute.
+* Sequential execution: max_concurent=1 
+* Automatic wait time calculation.
+                3.3.4    RAG Module
+The main purpose is to retrieve relevant context from the knowledge base and conversation history.
+Key Components
+* Agentic RAG: The IntentClassifier is a DSPy signature designed to identify the user’s intent from a given query so the system can route the request to the correct agent.It takes the query as an input field.
+* It produces the query as an input field.
+   * Intent- A label identifying the category of the users request.
+   * Confidence- A numerical score between 0 and 1 that expresses how confident the model is in the predicted intent. This classifier helps the system decide which module or agent should handle the users message, ensuring accurate routing and response generation.
+* Retrieval strategies:
+   * Conversation history: PGVector similarity search on message.
+   * Education content: PGVector similarity search on knowledge base.
+   * Market data: Direct API calls to finance.
+* Vector search 
+   * The retrieve_from_conversations function performs a similarity search across stored conversation messages. It takes a query embedding and returns the top K most similar messages based on vector distance.
+   * It constructs a SQL query that selects each message’s content, role, timestamp, and its distance from the query embedding.
+   * It filters only messages that already have embeddings stored.
+   * It returns only the top k most relevant messages.
+* Embedding storage
+   * The store_message_embedding function runs in the background and is responsible for generating and storing embeddings for new messages.
+   * Given a message ID and its text context, it calls the OpenAI embedding API to generate a vector representation of the message.
+   * Once the embeddings is generated , it updates the corresponding message row in the database by saving the embedding vector in the embedding column.
+   * This entire process runs asynchronous so it dosent slow down the main request flow.
+                3.4        API DESIGN
+                        3.4.1    REST API ENDPOINTS
+                                Authentication
+1. POST   /api/auth/register    - User registration
+2. POST   /api/auth/login       - User login
+3. GET    /api/auth/me          - Get current user
+                                Chat
+1. GET    /api/chat/history     - Get conversation history.
+2. DELETE /api/chat/{conv_id}   - Delete conversation.
+                                User Profile
+1. GET    /api/profile          - Get user profile
+2. PUT    /api/profile          - Update profile
+2. SYSTEM DESIGN
+   1. SYSTEM ARCHITECTURE 
+
+
+3. IMPLEMENTATION
+   1. IMPLEMENTATION APPROACHES
+
+
+4. TESTING
+   1. TEST CASES
+      1. FRONTEND-BASED TESTING CASES
+
+
+      2. INTEGRATION TESTING CASES
+
+
+      3. SYSTEM-LEVEL TESTING CASES
+
+
+   2. TESTING REPORTS
+      1. FRONTEND TESTING RESULTS
+
+
+      2. SYSTEM INTEGRATION TESTING RESULTS
+
+
+5. CONCLUSIONS
+   1. DESIGN AND IMPLEMENTATION ISSUES
+      1. TECHNICAL CHALLENGES ENCOUNTERED
+
+
+      2. USER EXPERIENCE AND ACCESSIBILITY CHALLENGES
+   2. ADVANTAGES AND LIMITATIONS
+      1. SYSTEM ADVANTAGES
+
+
+      2. SYSTEM LIMITATIONS
+
+
+   3. FUTURE SCOPE OF THE PROJECT 
+      1. TECHNICAL ENHANCEMENT OPPORTUNITIES
+
+
+      2. LONG-TERM VISION AND GOALS
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+REFERENCES
+
+
+
+
+
+
+
+
+
+
+Department of  Statistics and Data Science, Christ University

@@ -41,6 +41,7 @@
     opacity: 0;
     transform: translateY(-10px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -171,8 +172,13 @@
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 .confirm-dialog {
@@ -190,6 +196,7 @@
     opacity: 0;
     transform: scale(0.9);
   }
+
   to {
     opacity: 1;
     transform: scale(1);
@@ -207,7 +214,7 @@
   margin-bottom: 24px;
 }
 
-.confirm-content > p {
+.confirm-content>p {
   margin: 0 0 16px 0;
   font-size: 14px;
   color: #475569;
@@ -292,6 +299,7 @@
   .settings-dropdown {
     background: #1e293b;
     box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+    border: 1px solid #334155;
   }
 
   .settings-header {
@@ -315,14 +323,78 @@
 
   .confirm-dialog {
     background: #1e293b;
+    border: 1px solid #334155;
   }
 
   .confirm-dialog h3 {
     color: #f1f5f9;
   }
 
-  .confirm-content > p,
+  .confirm-content>p,
   .confirm-list li {
     color: #cbd5e1;
   }
+
+  /* Fix for the yellow note in dark mode */
+  .confirm-note {
+    background: rgba(245, 158, 11, 0.1);
+    border-left-color: #fbbf24;
+    color: #fbbf24;
+  }
+
+  .btn-cancel {
+    background: #334155;
+    color: #cbd5e1;
+  }
+
+  .btn-cancel:hover:not(:disabled) {
+    background: #475569;
+    color: #fff;
+  }
+}
+
+/* Ensure force dark mode class support if user toggles manually */
+body.dark .settings-dropdown,
+body.dark .confirm-dialog {
+  background: #1e293b;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  border: 1px solid #334155;
+}
+
+body.dark .settings-header {
+  border-bottom-color: #334155;
+}
+
+body.dark .settings-header h3,
+body.dark .setting-info h4,
+body.dark .confirm-dialog h3 {
+  color: #f1f5f9;
+}
+
+body.dark .setting-description,
+body.dark .confirm-content>p,
+body.dark .confirm-list li {
+  color: #94a3b8;
+}
+
+body.dark .visibility-btn {
+  background: #0f172a;
+  border-color: #334155;
+  color: #94a3b8;
+}
+
+body.dark .confirm-note {
+  background: rgba(245, 158, 11, 0.15);
+  border-left-color: #fbbf24;
+  color: #fbbf24;
+}
+
+body.dark .btn-cancel {
+  background: #334155;
+  color: #cbd5e1;
+}
+
+body.dark .btn-cancel:hover:not(:disabled) {
+  background: #475569;
+  color: #fff;
 }

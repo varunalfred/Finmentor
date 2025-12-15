@@ -10,6 +10,7 @@ import ChatInterface from './chat/ChatInterface';
 import PublicKnowledgeFeed from './chat/PublicKnowledgeFeed';
 import Profile from '../pages/Profile';
 import PortfolioDashboard from '../pages/PortfolioDashboard';
+import About from '../pages/About';
 import UnifiedHeader from './common/UnifiedHeader';
 import './Dashboard.css';
 
@@ -95,11 +96,8 @@ const Dashboard = () => {
                 <Profile />
               )}
 
-              {location.pathname === '/dashboard/contact' && (
-                <div className="page-content">
-                  <h1>Contact Us</h1>
-                  <p>Get in touch with our support team</p>
-                </div>
+              {(location.pathname === '/dashboard/contact' || location.pathname === '/dashboard/about') && (
+                <About />
               )}
 
               {location.pathname === '/dashboard/portfolio' && (

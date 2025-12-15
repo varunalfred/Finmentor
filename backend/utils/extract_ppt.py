@@ -1,37 +1,39 @@
 from pptx import Presentation
 import sys
 
-ppt_path = r"D:\Christ University\MSc\5MDS\ProjectFinance\ProjectPPT.pptx"
+ppt_path = r"D:\Christ University\MSc\5MDS\ProjectFinance\PortifolioBuilder\Finmentor (1).pptx"
 
 try:
     prs = Presentation(ppt_path)
-    print(f"Total slides: {len(prs.slides)}\n")
-    print("="*80)
-    
-    for i, slide in enumerate(prs.slides):
-        print(f"\n--- SLIDE {i+1} ---")
-        print("-"*80)
+    with open("ppt_output.txt", "w", encoding="utf-8") as f:
+        f.write(f"Total slides: {len(prs.slides)}\n\n")
+        f.write("="*80 + "\n")
         
-        for shape in slide.shapes:
-            if hasattr(shape, "text") and shape.text.strip():
-                print(shape.text)
-        
-        # Check for tables
-        if slide.shapes:
+        for i, slide in enumerate(prs.slides):
+            f.write(f"\n--- SLIDE {i+1} ---\n")
+            f.write("-" * 80 + "\n")
+            
             for shape in slide.shapes:
-                if shape.shape_type == 19:  # Table
-                    print("\n[TABLE DETECTED]")
-                    try:
-                        for row in shape.table.rows:
-                            row_text = " | ".join([cell.text for cell in row.cells])
-                            print(row_text)
-                    except:
-                        pass
+                if hasattr(shape, "text") and shape.text.strip():
+                    f.write(shape.text + "\n")
+            
+            # Check for tables
+            if slide.shapes:
+                for shape in slide.shapes:
+                    if shape.shape_type == 19:  # Table
+                        f.write("\n[TABLE DETECTED]\n")
+                        try:
+                            for row in shape.table.rows:
+                                row_text = " | ".join([cell.text for cell in row.cells])
+                                f.write(row_text + "\n")
+                        except:
+                            pass
+            
+            f.write("-" * 80 + "\n")
         
-        print("-"*80)
-    
-    print("\n" + "="*80)
-    print("EXTRACTION COMPLETE")
+        f.write("\n" + "="*80 + "\n")
+        f.write("EXTRACTION COMPLETE\n")
+        print("Output written to ppt_output.txt")
     
 except Exception as e:
     print(f"Error: {e}")

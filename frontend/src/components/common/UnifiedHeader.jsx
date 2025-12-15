@@ -22,7 +22,7 @@ const UnifiedHeader = ({
     { id: 'chat', label: 'FinMentor Chat', path: '/dashboard/chat' },
     { id: 'community', label: '🌍 Community', path: '/dashboard/community' },
     { id: 'portfolio', label: 'My Portfolio', path: '/dashboard/portfolio' },
-    { id: 'contact', label: 'Contact Us', path: '/dashboard/contact' }
+    { id: 'contact', label: 'About Us', path: '/dashboard/about' }
   ];
 
   const handleNavigation = (path) => {

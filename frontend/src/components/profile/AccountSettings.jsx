@@ -3,7 +3,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import './AccountSettings.css';
 
 // API Base URL - uses environment variable or defaults to localhost
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
 const AccountSettings = () => {
   const { user, updateUser } = useAuth(); // ✅ Use AuthContext for initial data

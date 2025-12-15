@@ -1,23 +1,23 @@
 import React, { useState, useEffect } from 'react';
 import './DocumentManager.css';
 
-const DocumentManager = ({ conversationId }) => {
+const DocumentManager = ({ conversationId, refreshTrigger }) => {
     const [documents, setDocuments] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
     const [showManager, setShowManager] = useState(false);
 
     useEffect(() => {
-        if (showManager && conversationId) {
+        if (conversationId) {
             fetchDocuments();
         }
-    }, [showManager, conversationId]);
+    }, [conversationId, refreshTrigger]);
 
     const fetchDocuments = async () => {
         setIsLoading(true);
         try {
             const token = localStorage.getItem('access_token');
             const response = await fetch(
-                `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'}/api/chat/documents/mine`,
+                `${import.meta.env.VITE_API_BASE_URL || ''}/api/chat/documents/mine?conversation_id=${conversationId}`,
                 {
                     headers: {
                         'Authorization': `Bearer ${token}`,

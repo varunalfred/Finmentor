@@ -52,54 +52,57 @@ class APIKeyRotator:
     @classmethod
     def from_env(cls, env_var: str = "GEMINI_API_KEY") -> "APIKeyRotator":
         """
-        Create rotator from environment variable
-        
-        Supports:
-        1. Standard: GEMINI_API_KEY
-        2. Indexed: GEMINI_API_KEY1, GEMINI_API_KEY2, etc.
-        3. Comma-separated: GEMINI_API_KEYS=key1,key2
+        Create rotator from environment variables.
+        Auto-detects provider if specific env_var not found.
         """
-        api_keys = []
+        # Prefixes to check if default is not found
+        prefixes = [env_var.replace("_API_KEY", ""), "GEMINI", "GROQ", "OPENAI", "ANTHROPIC"]
         
-        # 1. Check for indexed keys (GEMINI_API_KEY1, GEMINI_API_KEY2...)
-        # Also check base GEMINI_API_KEY
-        base_key = os.getenv("GEMINI_API_KEY")
-        if base_key:
-            api_keys.append(base_key)
+        api_keys = []
+        found_prefix = ""
+        
+        for prefix in prefixes:
+            base_var = f"{prefix}_API_KEY"
             
-        i = 1
-        while True:
-            # Check for GEMINI_API_KEY1, GEMINI_API_KEY2, etc.
-            key = os.getenv(f"GEMINI_API_KEY{i}")
-            if not key:
-                # Also check with underscore: GEMINI_API_KEY_1
-                key = os.getenv(f"GEMINI_API_KEY_{i}")
-                
-            if not key:
-                break
-                
-            api_keys.append(key)
-            i += 1
+            # 1. Check base key
+            if os.getenv(base_var):
+                api_keys.append(os.getenv(base_var))
             
-        # 2. Check for comma-separated list
-        if not api_keys:
-            keys_str = os.getenv("GEMINI_API_KEYS", "")
+            # 2. Check indexed keys (PREFIX_API_KEY1, PREFIX_API_KEY_1, etc.)
+            i = 1
+            while True:
+                key = os.getenv(f"{base_var}{i}") or os.getenv(f"{base_var}_{i}")
+                if not key:
+                    break
+                api_keys.append(key)
+                i += 1
+                
+            # 3. Check comma-separated list
+            keys_str = os.getenv(f"{base_var}S", "")
             if keys_str:
-                api_keys = [key.strip() for key in keys_str.split(",") if key.strip()]
-
+                api_keys.extend([k.strip() for k in keys_str.split(",") if k.strip()])
+                
+            if api_keys:
+                found_prefix = prefix
+                logger.info(f"Found {len(api_keys)} API keys for provider: {prefix}")
+                break
+        
         if not api_keys:
-            raise ValueError(
-                "No API keys found. Please set GEMINI_API_KEY, GEMINI_API_KEY1, etc."
-            )
+            # Fallback for when no specific keys are found - prevent crash but warn
+            logger.warning("No API keys found in environment variables!")
+            # We don't raise here to allow manual instantiation, but typical usage might fail later
             
         # Remove duplicates while preserving order
         unique_keys = []
         seen = set()
         for key in api_keys:
-            if key not in seen:
+            if key and key not in seen:
                 unique_keys.append(key)
                 seen.add(key)
                 
+        if not unique_keys:
+             raise ValueError("No valid API keys found. Please check your .env file.")
+
         return cls(unique_keys)
     
     def get_next_key(self) -> str:

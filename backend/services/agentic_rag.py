@@ -505,6 +505,41 @@ class AgenticRAG:
                     "source": source_type
                 })
             
+            if not results:
+                # Check for documents currently processing (recent uploads with no chunks yet)
+                try:
+                    # Check documents uploaded in last 5 minutes with 0 or None chunks
+                    five_mins_ago = datetime.now(timezone.utc) - timedelta(minutes=5)
+                    pending_stmt = select(UserDocument).where(
+                        and_(
+                            UserDocument.user_id == user_id,
+                            UserDocument.upload_date >= five_mins_ago,
+                            or_(UserDocument.total_chunks == 0, UserDocument.total_chunks == None)
+                        )
+                    ).limit(1)
+                    
+                    pending_result = await session.execute(pending_stmt)
+                    pending_doc = pending_result.scalar_one_or_none()
+                    
+                    if pending_doc:
+                        logger.info(f"Found pending document: {pending_doc.filename}")
+                        results.append({
+                            "id": "system-notification",
+                            "content": f"[SYSTEM NOTIFICATION] The document '{pending_doc.filename}' is currently being processed by the system. Please wait a moment while I analyze it.",
+                            "filename": pending_doc.filename,
+                            "page_number": 0,
+                            "chunk_index": 0,
+                            "is_public": False,
+                            "uploader_id": user_id,
+                            "conversation_id": pending_doc.conversation_id,
+                            "distance": 0.0,
+                            "similarity": 1.0,
+                            "attribution": "System Notification",
+                            "source": "system"
+                        })
+                except Exception as e:
+                    logger.warning(f"Error checking pending docs: {e}")
+
             logger.info(f"Retrieved {len(results)} document chunks for user {user_id}")
             return results
             

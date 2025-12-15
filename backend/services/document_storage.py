@@ -70,7 +70,8 @@ class DocumentStorageService:
         filename: str,
         user_id: str,
         conversation_id: str,
-        is_public: bool = False
+        is_public: bool = False,
+        document_id: Optional[str] = None
     ) -> Dict:
         """
         Store PDF with chunks in PGVector
@@ -81,6 +82,7 @@ class DocumentStorageService:
             user_id: User ID
             conversation_id: Conversation ID
             is_public: Whether document is public
+            document_id: Optional pre-generated ID
             
         Returns:
             Dict with document info and success status
@@ -103,6 +105,7 @@ class DocumentStorageService:
             
             # 2. Create document record
             document = UserDocument(
+                id=document_id, # Use provided ID if any (DB will generate if None)
                 conversation_id=conversation_id,
                 user_id=user_id,
                 filename=filename,

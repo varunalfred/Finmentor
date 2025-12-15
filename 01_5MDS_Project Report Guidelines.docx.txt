@@ -1,0 +1,261 @@
+﻿Project Title                                                                                                                                                              
+
+
+PROJECT REPORT GUIDELINES
+
+
+PAPER SIZE, BINDING, MARGINS, FONTS AND LINE SPACINGS:
+
+
+Font:                 Times New Roman
+In-text Font Size:         
+Chapter Title: 16 Bold (In Capital letters, Centered)
+                Side Headings:  12 Bold (In Capital letters)
+                All other text 12 (Normal text)
+Line Spacing: 1.5 
+Paper Size: A4 [One side printing]
+Hard binding: Cover color: Sky Blue 
+Margins:         
+                Left margin: 1.5 inch
+                Right margin: 1 inch
+                Top: 1 inch
+Bottom: 1 inch
+Number of Copies: One Copy per Student
+Number of Pages: Minimum – 40 ; Maximum – 60
+
+
+Header:         Project Name (Left) and Page number (Right)
+Footer:        Department of Statistics and Data Science, CHRIST (Deemed to be University)
+[with font size 10 for both header and footer; Include border line for header and footer]
+
+
+
+
+PAGE NUMBERING
+1. Lower-case Roman numerals (e.g., iii, iv, v) for the front matter/preliminary material from acknowledgements. 
+2. Arabic numbers (e.g., 1, 2, 3, etc.) starts from chapter 1.  (This can be achieved by giving a section break)
+3. No Header and footer for TOC, Certificate and Title Page.
+4. Chapters, Sections, Subsections are numbered as per the following meaning: example
+1.3.2 stands for Chapter 1, section 3, Subsection 2.
+
+
+
+
+________________
+
+
+FIGURES AND TABLES
+1. Position Figures and Tables as close as possible to the text where they are referred.
+2. Figures and Tables should be numbered in ascending order for each chapter. Example second image in chapter 3 will be Fig 3.2. 
+3. The number of the figure, and its caption should be typed immediately below it in Times New Roman Size 10.
+4. The number of the table and its caption should be typed immediately above it in Times New Roman Size 10.
+
+
+List of Figures
+
+
+Figure No.
+	
+
+Figure Name
+	
+
+Page No.
+	Fig. 2.1
+	Caption/name of the figure
+	8
+	
+
+	
+
+	
+
+	
+
+List of Tables
+
+
+Table No.
+	
+
+Table Name
+	
+
+Page No.
+	Table. 2.1
+	Caption/name of the table
+	12
+	
+
+	
+
+	
+
+	
+
+ACKNOWLEDGEMENTS
+1. Include names following the hierarchy
+2. May include all those who helped to complete the project [optional]
+
+
+ABSTRACT
+The abstract should condense the report to 200-250 words . Do not include any sub-title or bullets in abstract. The abstract should contain: 
+   1. the most essential background information 
+   2. the purpose and scope of the project 
+   3. major outcomes and recommendations 
+
+
+CONCLUSION
+
+
+Rewrite the aim and objective of the project with a brief note on the major modules. Summarize the available features, results and limitations. Conclude with your future enhancements.
+
+
+
+
+
+
+CITATION AND REFERENCES
+Strictly adhere to the IEEE reference citation format.
+1. Citation: The first step of the reference citation process is within the report itself. Each reference number should be enclosed in square brackets on the same line as the text, before any punctuation. 
+2. References: To finish citing sources, a numbered list of references must be provided at the end of the paper. The list is comprised of the sequential enumerated citations, with details, beginning with [1], and is not alphabetical. Page Format: Place references flush left, Single-space entries, double-space between. 
+For types of references like Book, Journal, websites, etc., refer the links given below.
+IEEE Citation Guidelines2.doc (ieee-dataport.org)
+IEEE_Reference_Guide.pdf
+APPENDICES
+Use the appendices to avoid interrupting the body of the report with excessive detail, thereby improving readability. Number the appendices with a structure like: A, A.1, B, etc. The appendices might include, but are not limited to: 
+1. A "Users Manual" or instructions for operating and maintaining the system you've designed. 
+2. Additional charts, graphs and tables. 
+3. Mathematical derivations, proofs, etc. 
+4. Detailed calculations (theoretical developments, error and sensitivity analyses, etc.) 
+5. Budget status. 
+6. Gantt chart and/or other planning information. 
+7. Division of work within the group: what did each member accomplish for the project and for the report? 
+8. An analysis of the "design concepts" topics (e.g. health and safety) given separately. Indicate how your design is affected by each topic. 
+LIST OF ABBREVIATIONS
+Example: 
+UNICEF        United Nations Children’s Fund
+
+
+
+
+CHAPTERS OF THE REPORT
+
+
+Decide the chapters based on the on the type of projects and the project development life cycle followed in your respective organization. Divide the chapters in phases if your project includes training as a major phase and then project development as a minor phase.
+
+
+1. For Application development you may use the SDLC (waterfall, Agile, etc)/DevOps
+2. For Application with Data Science projects you may use hybrid approach of SDLC/DevOps and CRISP-DM/SEMMA/KDD, etc 
+3. For Application, Data Science and Research, you may use hybrid approach of SDLC/DevOps, CRISP-DM and Research Methodology (RM).
+4. For training phase, you may include the Standard Operating Procedures (SOP) followed in the company. 
+
+
+IMPORTANT INSTRUCTIONS
+1. Do not end a page with a title. Shift the title to the next page.
+2. Do not end a page with a single line of a new paragraph, Start the new paragraph in the next page.
+3. Do not include Thumb index, transparency sheets etc., within the report.
+4. Use a drawing canvas to start drawing the image.
+5. Strictly follow the given format for references.
+6. Follow the guidelines for Screen shots/Diagrams and tables.
+7. Use automatic table of content option available in documentation tools (MS-Word, Open Office, etc.) 
+
+
+Strictly follow the Order of Pages given below
+Title Page (Refer the template)
+
+
+Certificate page (Refer the template)
+
+
+Acknowledgments                                                         
+
+
+Abstract                                                                 
+
+
+Table of Contents 
+
+
+List of Tables
+        
+List of Figures 
+
+
+Abbreviations (optional)                                                
+
+
+All Chapters …. (Refer the sample TOC given below)
+
+
+Appendices
+References 
+________________
+TABLE OF CONTENTS
+
+
+
+
+Acknowledgments                                                                 iii                
+Abstract                                                                         iv                
+List of Tables                
+List of Figures 
+Abbreviations (optional)                                                
+1. Introduction                                                                 1
+   1. Problem Description                                                         3        
+   2. Existing System
+   3. Project Scope
+   4. …...
+   5. …..
+2. System Analysis
+   1. Functional Specifications
+      1. …..
+      2. …..
+   2. Block Diagram
+   3. System Requirements 
+      1. .......
+      2. …...
+3. System Design
+   1. System Architecture 
+   2. Module Design
+   3. Database Design 
+      1. Table Structure
+      2. Data Flow Diagram
+      3. ER Diagram
+   4. System Configuration (optional) 
+   5. Interface Design
+      1. User Interface Screen Design
+      2. Application flow/Class Diagram
+   6. Reports Design
+   7. …....
+   8. 4. Implementation
+   1. Coding Standard
+   2. Screen Shots 
+5. Testing
+   1. Test Cases
+   2. Test Reports
+6. Conclusions 
+   1. Design and Implementation Issues
+   2. Advantages and Limitations 
+   3. Future Enhancements
+Appendices
+A …….
+A.1 ……
+A.2…….
+A.3…….
+B…….
+B.1…….
+B.2…….
+B.3…….
+References
+
+
+
+
+
+
+
+
+
+
+Department of  Statistics and Data Science, Christ University

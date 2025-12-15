@@ -23,6 +23,7 @@ const ChatInterface = ({
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [docRefreshTrigger, setDocRefreshTrigger] = useState(0);
   const [error, setError] = useState(null);
   const [conversationId, setConversationId] = useState(null); // Track conversation thread
   const [sidebarOpen, setSidebarOpen] = useState(false); // Sidebar toggle
@@ -43,6 +44,30 @@ const ChatInterface = ({
   useEffect(() => {
     scrollToBottom();
   }, [messages, isTyping]);
+
+  // Auth Redirect Check
+  useEffect(() => {
+    const checkAuth = () => {
+      const token = localStorage.getItem('access_token');
+      if (!token) {
+        window.location.href = '/login';
+      }
+    };
+    checkAuth();
+
+    // Check for conversation ID in URL (from Community or elsewhere)
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlConvId = urlParams.get('id');
+    if (urlConvId) {
+      handleSelectConversation({ id: urlConvId });
+      // Use history.pushState to clean URL without reloading, if desired, 
+      // or leave it to allow bookmarking.
+    }
+
+    // Optional: interval check
+    const interval = setInterval(checkAuth, 5000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Register callbacks with parent component
   useEffect(() => {
@@ -98,91 +123,82 @@ const ChatInterface = ({
       // If we have attachment data (from pending attachment), add it to the API call
       // We need to modify how we call the API to support this hybrid mode
       // For now, we'll use the existing structure but pass the document data if present
-      let result;
-      if (attachmentData) {
-        // If we have a document ID (from background upload), use it!
-        if (pendingAttachment.documentId) {
-          result = await api.sendChatMessage(
-            messageContent,
-            conversationId,
-            null, // userProfile
-            'text', // inputType is text because we are sending a message about the doc
-            pendingAttachment.documentId // Pass the pre-uploaded document ID
-          );
-        } else {
-          // Fallback for legacy/direct data (shouldn't happen with new flow but good for safety)
-          result = await api.sendChatMessage(
-            messageContent,
-            conversationId,
-            {
-              input_type: 'document',
-              document_data: attachmentData
+      // Prepare payload for streaming
+      const payload = {
+        message: messageContent,
+        conversation_id: conversationId,
+        input_type: attachmentData ? 'text' : 'text', // Input is text ABOUT the doc.
+        // If we have an attachment, pass its ID in context so backend knows what to look at
+        context: pendingAttachment?.documentId ? { document_id: pendingAttachment.documentId } : null,
+        user_profile: null // Let API handle defaults
+      };
+
+      // Standard text message setup (used for ALL types now)
+      const aiMessageId = Date.now() + 1;
+      const initialAiMessage = {
+        id: aiMessageId,
+        role: 'assistant',
+        content: '',
+        thoughts: [], // Array to store thinking steps
+        timestamp: new Date().toISOString(),
+        isStreaming: true
+      };
+      setMessages(prev => [...prev, initialAiMessage]);
+      setIsTyping(false); // Hide generic typing indicator since we have a specific message placeholder now
+
+      // Streaming callback
+      let fullContent = '';
+      let currentThoughts = [];
+
+      await api.streamChatMessage(
+        payload,
+        (chunk) => {
+          // As soon as we get ANY data, stop the generic "Typing" bubble
+          setIsTyping(false);
+
+          if (chunk.type === 'thought') {
+            if (!currentThoughts.includes(chunk.content)) {
+              currentThoughts.push(chunk.content);
+              setMessages(prev => prev.map(msg =>
+                msg.id === aiMessageId ? { ...msg, thoughts: [...currentThoughts] } : msg
+              ));
             }
-          );
-        }
-      } else {
-        // Standard text message
-        // Create placeholder for AI response
-        const aiMessageId = Date.now() + 1;
-        const initialAiMessage = {
-          id: aiMessageId,
-          role: 'assistant',
-          content: '',
-          thoughts: [], // Array to store thinking steps
-          timestamp: new Date().toISOString(),
-          isStreaming: true
-        };
-        setMessages(prev => [...prev, initialAiMessage]);
-
-        // Streaming callback
-        let fullContent = '';
-        let currentThoughts = [];
-
-        await api.streamChatMessage(
-          {
-            message: messageContent,
-            conversation_id: conversationId,
-            input_type: attachmentData ? 'document' : 'text', // Simplified for now
-            document_data: attachmentData,
-            user_profile: null // Let API handle defaults
-          },
-          (chunk) => {
-            if (chunk.type === 'thought') {
-              if (!currentThoughts.includes(chunk.content)) {
-                currentThoughts.push(chunk.content);
-                setMessages(prev => prev.map(msg =>
-                  msg.id === aiMessageId ? { ...msg, thoughts: [...currentThoughts] } : msg
-                ));
+          } else if (chunk.type === 'token') {
+            fullContent += chunk.content;
+            setMessages(prev => prev.map(msg =>
+              msg.id === aiMessageId ? { ...msg, content: fullContent } : msg
+            ));
+          } else if (chunk.type === 'error') {
+            setMessages(prev => prev.map(msg =>
+              msg.id === aiMessageId ? { ...msg, content: `Error: ${chunk.content}`, isStreaming: false } : msg
+            ));
+          } else if (chunk.type === 'metadata') {
+            if (chunk.content && chunk.content.conversation_id) {
+              setConversationId(chunk.content.conversation_id);
+              // Refresh sidebar since we have a new conversation
+              if (sidebarRefreshRef.current) {
+                sidebarRefreshRef.current();
               }
-            } else if (chunk.type === 'token') {
-              fullContent += chunk.content;
-              setMessages(prev => prev.map(msg =>
-                msg.id === aiMessageId ? { ...msg, content: fullContent } : msg
-              ));
-            } else if (chunk.type === 'error') {
-              setMessages(prev => prev.map(msg =>
-                msg.id === aiMessageId ? { ...msg, content: `Error: ${chunk.content}`, isStreaming: false } : msg
-              ));
             }
           }
-        );
-
-        // Finalize message
-        setMessages(prev => prev.map(msg => {
-          if (msg.id === aiMessageId) {
-            return { ...msg, isStreaming: false };
-          }
-          return msg;
-        }));
-
-        setIsTyping(false);
-
-        // Refresh sidebar if new conversation
-        if (!conversationId && sidebarRefreshRef.current) {
-          sidebarRefreshRef.current();
         }
+      );
 
+      // Finalize message
+      setMessages(prev => prev.map(msg => {
+        if (msg.id === aiMessageId) {
+          return { ...msg, isStreaming: false };
+        }
+        return msg;
+      }));
+
+      setIsTyping(false);
+
+      // Refresh sidebar if new conversation
+      if (!conversationId && sidebarRefreshRef.current) {
+        sidebarRefreshRef.current();
       }
+
     } catch (err) {
       console.error('Chat error:', err);
       toast.error('Failed to get response. Please try again.');
@@ -229,6 +245,15 @@ const ChatInterface = ({
 
         setMessages(loadedMessages);
         setConversationId(conversation.id);
+
+        // Update visibility state if available in conversation object
+        if (conversation.is_public !== undefined) {
+          setConversationVisibility(conversation.is_public ? 'public' : 'private');
+        } else if (result.data.conversation) {
+          // Fallback to checking the response data if it contains conversation metadata
+          setConversationVisibility(result.data.conversation.is_public ? 'public' : 'private');
+        }
+
         setError(null);
       } else {
         setError('Failed to load conversation');
@@ -370,6 +395,9 @@ const ChatInterface = ({
           toast.dismiss(loadingToast);
           toast.success('File processed & ready! Type your message.');
 
+          // Trigger document list update
+          setDocRefreshTrigger(prev => prev + 1);
+
         } catch (err) {
           toast.dismiss(loadingToast);
           toast.error('Failed to process file');
@@ -438,7 +466,10 @@ const ChatInterface = ({
                 toast.success(`Conversation is now ${newVisibility}`);
               }}
             />
-            <DocumentManager conversationId={conversationId} />
+            <DocumentManager
+              conversationId={conversationId}
+              refreshTrigger={docRefreshTrigger}
+            />
           </div>
         )}
 
@@ -491,11 +522,30 @@ const ChatInterface = ({
                         <summary>
                           {message.isStreaming ? 'Thinking...' : 'View Thought Process'}
                         </summary>
-                        <ul>
-                          {message.thoughts.map((thought, idx) => (
-                            <li key={idx}>{thought}</li>
-                          ))}
-                        </ul>
+                        <div className="thought-timeline">
+                          {message.thoughts.map((thought, idx) => {
+                            let icon = '🤔';
+                            let typeClass = 'thinking';
+
+                            if (thought.toLowerCase().includes('tool') || thought.toLowerCase().includes('using')) {
+                              icon = '🛠️';
+                              typeClass = 'tool';
+                            } else if (thought.toLowerCase().includes('search') || thought.toLowerCase().includes('retriev') || thought.toLowerCase().includes('context')) {
+                              icon = '🔍';
+                              typeClass = 'search';
+                            } else if (thought.toLowerCase().includes('analyz')) {
+                              icon = '⚡';
+                              typeClass = 'analysis';
+                            }
+
+                            return (
+                              <div key={idx} className={`thought-step ${typeClass}`}>
+                                <span className="thought-icon">{icon}</span>
+                                <span className="thought-text">{thought}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
                       </details>
                     </div>
                   )}
@@ -503,7 +553,10 @@ const ChatInterface = ({
                   {/* Main Content */}
                   <div className="message-text">
                     {message.content}
-                    {message.isStreaming && <span className="cursor">|</span>}
+                    {/* Only show blinking cursor if we are streaming and have content, OR if we have no thoughts yet */}
+                    {message.isStreaming && (!message.thoughts || message.thoughts.length === 0 || message.content) && (
+                      <span className="cursor">|</span>
+                    )}
                   </div>
 
                   <div className="message-time">{formatTime(message.timestamp)}</div>

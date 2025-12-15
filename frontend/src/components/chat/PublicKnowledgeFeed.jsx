@@ -17,7 +17,7 @@ const PublicKnowledgeFeed = () => {
 
         try {
             const response = await fetch(
-                `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'}/api/chat/conversations/public?sort_by=${sortBy}&limit=20`,
+                `${import.meta.env.VITE_API_BASE_URL || ''}/api/chat/conversations/public?sort_by=${sortBy}&limit=20`,
                 {
                     headers: {
                         'Content-Type': 'application/json'
@@ -178,7 +178,10 @@ const PublicKnowledgeFeed = () => {
                             </div>
 
                             <div className="card-actions">
-                                <button className="view-btn">
+                                <button
+                                    className="view-btn"
+                                    onClick={() => window.location.href = `/dashboard/chat?id=${conv.id}`}
+                                >
                                     View Conversation →
                                 </button>
                             </div>
